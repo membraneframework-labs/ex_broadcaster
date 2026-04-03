@@ -17,19 +17,16 @@ defmodule MembraneVkHls.Application do
 
   require Logger
 
+  @max_concurrent_pipelines Application.compile_env(:membrane_vk_hls, :max_concurrent_pipelines, 10)
+
   @impl true
   def start(_type, _args) do
     rtmp_port = Application.get_env(:membrane_vk_hls, :rtmp_port, 1935)
     http_port = Application.get_env(:membrane_vk_hls, :http_port, 8080)
 
     children = [
-      # Supervisor for per-client transcoding pipelines
       {DynamicSupervisor, name: __MODULE__.PipelineSupervisor, strategy: :one_for_one},
-
-      # RTMP server — invokes handle_new_client/3 for each connecting publisher
       {Membrane.RTMPServer, port: rtmp_port, handle_new_client: &__MODULE__.handle_new_client/3},
-
-      # HTTP server — serves HLS playlists and segments from hls_output_dir
       {Bandit, plug: MembraneVkHls.HTTPServer, port: http_port}
     ]
 
@@ -59,15 +56,21 @@ defmodule MembraneVkHls.Application do
       segment_duration: Membrane.Time.seconds(segment_duration_sec)
     ]
 
-    case DynamicSupervisor.start_child(
-           __MODULE__.PipelineSupervisor,
-           {MembraneVkHls.Pipeline, pipeline_opts}
-         ) do
-      {:ok, _supervisor, pid} ->
-        Logger.info("[App] Pipeline started (pid=#{inspect(pid)}) for stream_key=#{stream_key}")
+    %{active: active} = DynamicSupervisor.count_children(__MODULE__.PipelineSupervisor)
 
-      {:error, reason} ->
-        Logger.error("[App] Failed to start pipeline: #{inspect(reason)}")
+    if active >= @max_concurrent_pipelines do
+      Logger.warning("[App] Rejecting client (stream_key=#{stream_key}): reached limit of #{@max_concurrent_pipelines} concurrent pipelines")
+    else
+      case DynamicSupervisor.start_child(
+             __MODULE__.PipelineSupervisor,
+             {MembraneVkHls.Pipeline, pipeline_opts}
+           ) do
+        {:ok, _supervisor, pid} ->
+          Logger.info("[App] Pipeline started (pid=#{inspect(pid)}) for stream_key=#{stream_key}")
+
+        {:error, reason} ->
+          Logger.error("[App] Failed to start pipeline: #{inspect(reason)}")
+      end
     end
 
     Membrane.RTMP.Source.ClientHandlerImpl

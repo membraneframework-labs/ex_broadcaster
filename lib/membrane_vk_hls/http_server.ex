@@ -37,8 +37,6 @@ defmodule MembraneVkHls.HTTPServer do
     send_resp(conn, 405, "Method not allowed")
   end
 
-  # Sets CORS headers for every request, and cache-control based on file type.
-  # Must run before Plug.Static so that the headers are present on served responses.
   defp put_cors_and_cache_headers(conn, _opts) do
     cache_control =
       case Path.extname(conn.request_path) do

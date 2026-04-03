@@ -8,17 +8,8 @@ config :mime, :types, %{
 }
 
 config :membrane_vk_hls,
-  # Port OBS / FFmpeg pushes the RTMP stream to
   rtmp_port: 1935,
-
-  # Directory where HLS playlists and segments will be written.
-  # A sub-directory named after the stream key is created for each client.
   hls_output_dir: "output/hls",
-
-  # HLS segment target duration in seconds.
-  # Lower values reduce latency; higher values improve compression efficiency.
   segment_duration_sec: 4,
-
-  # Port the built-in HTTP server listens on.
-  # Streams are available at http://localhost:<http_port>/<stream_key>/index.m3u8
-  http_port: 8080
+  http_port: 8080,
+  max_concurrent_pipelines: 10
