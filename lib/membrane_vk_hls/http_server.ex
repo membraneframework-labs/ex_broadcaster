@@ -19,14 +19,15 @@ defmodule MembraneVkHls.HTTPServer do
 
   @hls_dir Application.compile_env(:membrane_vk_hls, :hls_output_dir, "output/hls")
 
-  plug :put_cors_and_cache_headers
+  plug(:put_cors_and_cache_headers)
 
-  plug Plug.Static,
+  plug(Plug.Static,
     at: "/",
     from: @hls_dir
+  )
 
-  plug :match
-  plug :dispatch
+  plug(:match)
+  plug(:dispatch)
 
   get _ do
     send_resp(conn, 404, "Not found")

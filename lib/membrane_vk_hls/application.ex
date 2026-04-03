@@ -27,9 +27,7 @@ defmodule MembraneVkHls.Application do
       {DynamicSupervisor, name: __MODULE__.PipelineSupervisor, strategy: :one_for_one},
 
       # RTMP server — invokes handle_new_client/3 for each connecting publisher
-      {Membrane.RTMPServer,
-       port: rtmp_port,
-       handle_new_client: &__MODULE__.handle_new_client/3},
+      {Membrane.RTMPServer, port: rtmp_port, handle_new_client: &__MODULE__.handle_new_client/3},
 
       # HTTP server — serves HLS playlists and segments from hls_output_dir
       {Bandit, plug: MembraneVkHls.HTTPServer, port: http_port}

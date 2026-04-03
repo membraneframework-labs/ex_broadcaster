@@ -110,6 +110,7 @@ defmodule MembraneVkHls.Pipeline do
           name: "index",
           module: HTTPAdaptiveStream.HLS
         },
+        track_config: %HTTPAdaptiveStream.Sink.TrackConfig{},
         storage: %HTTPAdaptiveStream.Storages.FileStorage{directory: output_dir}
       })
 
