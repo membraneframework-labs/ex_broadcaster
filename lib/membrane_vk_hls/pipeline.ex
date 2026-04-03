@@ -61,6 +61,10 @@ defmodule MembraneVkHls.Pipeline do
     }
   ]
 
+  def start_link(opts) do
+    Membrane.Pipeline.start_link(__MODULE__, opts)
+  end
+
   @impl true
   def handle_init(_ctx, opts) do
     client_ref = Keyword.fetch!(opts, :client_ref)
