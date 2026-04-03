@@ -65,11 +65,11 @@ defmodule MembraneVkHls.Application do
          ) do
       {:ok, pid} ->
         Logger.info("[App] Pipeline started (pid=#{inspect(pid)}) for stream_key=#{stream_key}")
-        {:ok, pid}
 
       {:error, reason} ->
         Logger.error("[App] Failed to start pipeline: #{inspect(reason)}")
-        {:error, reason}
     end
+
+    Membrane.RTMP.Source.ClientHandlerImpl
   end
 end
