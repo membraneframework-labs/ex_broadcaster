@@ -63,7 +63,7 @@ defmodule MembraneVkHls.Application do
            __MODULE__.PipelineSupervisor,
            {MembraneVkHls.Pipeline, pipeline_opts}
          ) do
-      {:ok, pid} ->
+      {:ok, _supervisor, pid} ->
         Logger.info("[App] Pipeline started (pid=#{inspect(pid)}) for stream_key=#{stream_key}")
 
       {:error, reason} ->
