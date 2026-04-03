@@ -105,7 +105,7 @@ defmodule MembraneVkHls.Pipeline do
     audio_branch =
       get_child(:rtmp_source)
       |> via_out(:audio)
-      |> child(:aac_parser, %Membrane.AAC.Parser{out_encapsulation: :none})
+      |> child(:aac_parser, %Membrane.AAC.Parser{out_encapsulation: :none, output_config: :esds})
       |> child(:audio_tee, Membrane.Tee)
 
     hls_sink =
@@ -141,6 +141,10 @@ defmodule MembraneVkHls.Pipeline do
           scaling_algorithm: :bilinear
         ]
       )
+      |> child({:h264_parser_out, id}, %Membrane.H264.Parser{
+        output_alignment: :au,
+        output_stream_structure: :avc1
+      })
       |> via_in(Pad.ref(:input, {:video, id}))
       |> child({:cmaf_muxer, id}, %CMAFMuxer{segment_min_duration: segment_duration})
       |> via_in(Pad.ref(:input, id),
