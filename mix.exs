@@ -21,7 +21,7 @@ defmodule MembraneVkHls.MixProject do
   defp deps do
     [
       {:membrane_core, "~> 1.2"},
-      {:membrane_vk_video_plugin, github: "membraneframework/membrane_vk_video_plugin"},
+      {:membrane_vk_video_plugin, "~> 0.2.1"},
       {:membrane_rtmp_plugin, "~> 0.29.3"},
       {:membrane_http_adaptive_stream_plugin, "~> 0.21.0"},
       {:membrane_mp4_plugin, "~> 0.36.0"},
