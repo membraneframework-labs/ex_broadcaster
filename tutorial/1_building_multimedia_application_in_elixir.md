@@ -256,7 +256,7 @@ graph LR
 
     subgraph "Video branch"
         H264in["Membrane.H264.Parser\n(annexb · au-aligned)"]
-        Transcoder["Membrane.VKVideo.Transcoder\n(GPU · 3 output pads)"]
+        Transcoder["Membrane.VKVideo.Transcoder\n"]
     end
 
     subgraph "Audio branch"
@@ -272,11 +272,6 @@ graph LR
     subgraph "720p variant"
         H264out720["Membrane.H264.Parser\n(avc1 · au-aligned)"]
         CMAF720["Membrane.MP4.CMAF.Muxer\n(720p)"]
-    end
-
-    subgraph "480p variant"
-        H264out480["Membrane.H264.Parser\n(avc1 · au-aligned)"]
-        CMAF480["Membrane.MP4.CMAF.Muxer\n(480p)"]
     end
 
     subgraph Sink
