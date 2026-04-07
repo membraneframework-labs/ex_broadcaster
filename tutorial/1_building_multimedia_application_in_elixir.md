@@ -1,23 +1,22 @@
 # Bringing Membrane to production
 
-This article is the first in a series of articles about building a fully functional multimedia processing solution using Membrane Framework. Stay tuned for the forthcoming ones!
+This article is the first in a series on building a fully functional multimedia processing solution with Membrane Framework.
 
-Together we will build a system capable of ingesting stream (RTMP stream at very first), transcoding it to different resolutions to ensure it’s watchable even by viewers with poor network performance and distributing it globally with the use of HLS (HTTP Live Stream). 
-This type of system is a backbone of many applications, for instance Twitch. It allows broadcasting the user generated content (gameplay etc.) to thousands of viewers spread across the globe simultaneously and with the lowest streamer -> viewer latency possible. These types of system are also commonly offered as SaaS (e.g. AWS IVS - Interactive Video Service) so that developers can embed them in their own applications.
-Building such a broadcasting system faces multiple challenges and assuring its reliability requires a lot of time and effort. We will however show that a basic version of it can be built in Elixir, with the use of Membrane Framework and that even such a simple system can successfully run in production, effectively utilizing cloud resources, capable of scaling up with increased demand. 
+We will build a live video broadcasting system: one that ingests an RTMP stream, transcodes it into multiple resolutions to accommodate viewers with varying network conditions, and distributes it globally over HLS. Systems like this are the backbone of platforms such as Twitch — they allow user-generated content to be broadcast simultaneously to thousands of viewers around the world, with the lowest possible end-to-end latency. They are also offered as managed services (e.g. AWS IVS) so that product teams can embed live streaming without building the infrastructure themselves.
 
+Building a reliable broadcasting system is non-trivial. We will show, however, that a solid foundation can be written in Elixir with Membrane Framework — one that runs in production, utilizes GPU resources efficiently, and scales with demand.
 
-Below there is a list of steps we need to take to achieve this goal:
+Here is the plan:
 
-1. **Build the multimedia processing pipeline using Membrane Framework** — Using components already available in the Membrane Framework we will build a simple pipeline which will ingest RTMP stream, transcode it with the use of hardware acceleration to effectively utilize GPU resources into multiple resolutions with different bandwidth and put all stream versions into fragmented MP4 containers (being a “Common Media Application Format” - CMAF - format) and generate a `.m3u8` multi-variant playlist to allow the player at the viewer side to decide which resolution to choose depending on network conditions.
-2. **Wrap the pipeline into an Elixir application** to take advantage of supervision trees and configuration capabilities
-3. **Prepare a release of the application**
-4. **Ensure application scalability** with the use of clustering on K8s
-5. **Deploy the application** in a cloud environment, with appropriate configuration of runners to take advantage of GPU encoding and decoding
-6. **Configure cloud CDN** to ensure smooth broadcasting of the stream
-7. **Add observability**
+1. **Build the multimedia processing pipeline** — using existing Membrane components, we will build a pipeline that ingests an RTMP stream, transcodes it with GPU hardware acceleration into multiple resolutions and bitrates, packages each variant as fragmented MP4 (CMAF), and generates a `.m3u8` multi-variant playlist so the player can select the appropriate quality based on network conditions.
+2. **Wrap the pipeline in an Elixir application** to take advantage of OTP supervision trees and runtime configuration.
+3. **Prepare a release** of the application.
+4. **Ensure scalability** with clustering on Kubernetes.
+5. **Deploy to the cloud** with GPU-capable runners for hardware-accelerated encoding and decoding.
+6. **Configure a CDN** for global distribution.
+7. **Add observability.**
 
-In this chapter, we will cover first 3 of these steps!
+In this chapter we cover the first three steps.
 
 # Prerequisites
 In this chapter we will create an Elixir application and run it locally. Since the application will be performing hardware-accelerated video transcoding with the use of Vulkan Video Extensions, you need a Linux machine with a Vulkan-capable GPU (NVIDIA or AMD) with Mesa drivers and Vulkan Video extension support.
@@ -141,8 +140,6 @@ On application startup we spawn:
 - `Bandit` HTTP server
 
 We use `:one_for_one` supervision strategy to ensure that each child is restarted independently from the other. 
-
-We define `@max_concurrent_pipelines` as a module attribute using `Application.compile_env/3` rather than `Application.get_env/3` so the value is resolved at compile time.
 
 ## RTMP Server
 RTMP Server requires providing `handle_new_client` callback. It’s called each time a new client connects to the server. Let’s implement it:
@@ -346,7 +343,9 @@ A few things worth noting:
 - **`video_branch`** — takes the raw H.264 video, runs it through `Membrane.H264.Parser` (reformatting to Annex B, AU-aligned) to produce a stream the transcoder can consume, then hands it off to `Membrane.VKVideo.Transcoder` for GPU-accelerated re-encoding.
 - **`audio_branch`** — takes the AAC audio stream, parses it into raw ADTS-stripped frames with ESDS config, then feeds it into a `Membrane.Tee` so the single audio stream can be fanned out to all resolution variants without re-encoding.
 - **`hls_sink`** — `HTTPAdaptiveStream.Sink` collects CMAF tracks from all variants and writes fMP4 segments plus a multi-variant `index.m3u8` playlist to `output_dir`.
-- **`variant_specs`** — one spec per entry in `@variants`, built by `build_variant_spec/2` (covered in the next section). Each variant connects a transcoder output pad and a tee output pad into a shared CMAF muxer, which feeds its track into the HLS sink.
+
+Apart from there there we define `variant_specs` — one spec per entry in `@variants`, built by `build_variant_spec/2` (covered in the next section).
+Each variant connects a transcoder output pad and a tee output pad into a shared CMAF muxer, which feeds its track into the HLS sink.
 
 ## `build_variant_spec/2`
 
@@ -400,9 +399,9 @@ The **video chain** (`video_to_muxer`) starts from the transcoder. Each output p
 
 The **audio chain** (`audio_to_muxer`) is simpler: it taps the `:audio_tee` at a dynamic output pad keyed by `id` and feeds directly into the same `{:cmaf_muxer, id}` that the video chain already created. This means a single CMAF muxer produces one interleaved audio+video track per variant, which is exactly what HLS adaptive streaming expects.
 
-## Rest of the callbacks:
+## Self-termination of the pipeline:
 
-We also add `handle_element_end_of_stream` callback to ensure proper termination of the pipeline when the stream ends:
+We need to add `handle_element_end_of_stream` callback to ensure proper termination of the pipeline when the stream ends:
 ```elixir 
   @impl true
   def handle_element_end_of_stream(:hls_sink, _pad, _ctx, state) do
@@ -417,11 +416,14 @@ We also add `handle_element_end_of_stream` callback to ensure proper termination
 We only need to `terminate: normal` when the end-of-stream signal arrives at `:hls_sink` sink element.
 
 # Running the application
+Now our pipeline is ready for running.
+In development environment we can do:
+
 ```sh
 mix run --no-halt
 ```
 
-Push a test stream with FFmpeg:
+Then we can start a test stream with FFmpeg:
 ```sh
 ffmpeg -re -f lavfi -i testsrc=size=1280x720:rate=30 -f lavfi -i sine=frequency=1000 -c:v libx264 -preset veryfast -tune zerolatency -pix_fmt yuv420p -c:a aac -f flv rtmp://localhost:1935/broadcaster/key
 ```
@@ -434,3 +436,17 @@ You can open this URL directly in a browser with native HLS support (e.g. new Ch
 ```
 ffplay http://localhost:8080/key/index.m3u8
 ```
+
+## Building a release
+
+For deployment outside the development environment, build a self-contained release with:
+```sh
+MIX_ENV=prod mix release
+```
+
+This compiles the application and bundles it together with the Erlang runtime into `_build/prod/rel/ex_broadcaster/`. The release can then be started on any compatible machine without Elixir or Mix installed:
+```sh
+_build/prod/rel/ex_broadcaster/bin/ex_broadcaster start
+```
+
+Runtime configuration (ports, output directories, etc.) can be overridden via environment variables by adding a `config/runtime.exs` file that reads from `System.get_env/2`. This is the recommended way to configure the application per environment without recompiling.
