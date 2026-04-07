@@ -7,7 +7,7 @@ config :mime, :types, %{
   "video/mp2t" => ["ts"]
 }
 
-config :membrane_vk_hls,
+config :ex_broadcaster,
   rtmp_port: 1935,
   hls_output_dir: "output/hls",
   segment_duration_sec: 4,

@@ -1,9 +1,9 @@
-defmodule MembraneVkHls.MixProject do
+defmodule ExBroadcaster.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :membrane_vk_hls,
+      app: :ex_broadcaster,
       version: "0.1.0",
       elixir: "~> 1.14",
       start_permanent: Mix.env() == :prod,
@@ -14,7 +14,7 @@ defmodule MembraneVkHls.MixProject do
   def application do
     [
       extra_applications: [:logger],
-      mod: {MembraneVkHls.Application, []}
+      mod: {ExBroadcaster.Application, []}
     ]
   end
 

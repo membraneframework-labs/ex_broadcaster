@@ -1,4 +1,4 @@
-defmodule MembraneVkHls.HTTPServer do
+defmodule ExBroadcaster.HTTPServer do
   @moduledoc """
   Minimal HTTP server that serves HLS playlists and fMP4 segments from the
   `hls_output_dir` configured in `config/config.exs`.
@@ -17,7 +17,7 @@ defmodule MembraneVkHls.HTTPServer do
 
   use Plug.Router
 
-  @hls_dir Application.compile_env(:membrane_vk_hls, :hls_output_dir, "output/hls")
+  @hls_dir Application.compile_env(:ex_broadcaster, :hls_output_dir, "output/hls")
 
   plug(:put_cors_and_cache_headers)
 

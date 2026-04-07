@@ -1,4 +1,4 @@
-defmodule MembraneVkHls do
+defmodule ExBroadcaster do
   @moduledoc """
   RTMP-to-HLS adaptive transcoding application built on the Membrane Framework.
 

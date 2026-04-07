@@ -1,4 +1,4 @@
-defmodule MembraneVkHls.Pipeline do
+defmodule ExBroadcaster.Pipeline do
   @moduledoc """
   Membrane pipeline that receives a single RTMP stream, transcodes it to
   multiple H.264 variants using the GPU (via `Membrane.VKVideo.Transcoder`),
@@ -41,7 +41,7 @@ defmodule MembraneVkHls.Pipeline do
       width: 1920,
       height: 1080,
       bitrate: 4_000_000,
-      framerate: 30.0
+      framerate: {30, 1}
     },
     %{
       id: :p720,
@@ -49,7 +49,7 @@ defmodule MembraneVkHls.Pipeline do
       width: 1280,
       height: 720,
       bitrate: 2_500_000,
-      framerate: 30.0
+      framerate: {30, 1}
     },
     %{
       id: :p480,
@@ -57,7 +57,7 @@ defmodule MembraneVkHls.Pipeline do
       width: 854,
       height: 480,
       bitrate: 1_000_000,
-      framerate: 30.0
+      framerate: {30, 1}
     }
   ]
 
