@@ -459,7 +459,9 @@ Add `ex_aws`, `ex_aws_s3`, and `hackney` (the HTTP client ExAws uses) to `mix.ex
 
 ### Implementing the storage
 
-Create `lib/ex_broadcaster/storages/s3_storage.ex` and implement the [`Membrane.HTTPAdaptiveStream.Storage`](https://hexdocs.pm/membrane_http_adaptive_stream_plugin/Membrane.HTTPAdaptiveStream.Storage.html) behaviour. The behaviour requires two callbacks: `store/6` for writing a file and `remove/4` for deleting one. Each file is stored at `<prefix>/<name>` inside the bucket, where the prefix is set per-stream so concurrent streams do not collide.
+Create `lib/ex_broadcaster/storages/s3_storage.ex` and implement the
+[`Membrane.HTTPAdaptiveStream.Storage`](https://hexdocs.pm/membrane_http_adaptive_stream_plugin/Membrane.HTTPAdaptiveStream.Storage.html) behaviour.
+The behaviour requires two callbacks: `store/6` for writing a file and `remove/4` for deleting one. Each file is stored at `<prefix>/<name>` inside the bucket, where the prefix is set per-stream so concurrent streams do not collide.
 
 ```elixir
 # lib/ex_broadcaster/storages/s3_storage.ex
@@ -500,9 +502,11 @@ defmodule ExBroadcaster.Storages.S3Storage do
 end
 ```
 
-`init/1` is called once by the HLS sink before streaming starts and simply returns the config struct as state. `store/6` and `remove/4` are then called for every segment and manifest file as the stream progresses.
+`init/1` is called once by the HLS sink before streaming starts and simply returns the config struct as state.
+`store/6` and `remove/4` are then called for every segment and manifest file as the stream progresses.
 
-AWS credentials and region are resolved by ExAws from the environment in the usual way — `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` environment variables, an instance role, or entries in `config/runtime.exs`.
+AWS credentials and region are resolved by ExAws from the environment in the usual way
+— `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` environment variables, an instance role, or entries in `config/runtime.exs`.
 
 ### Selecting the backend
 
@@ -557,9 +561,12 @@ For deployment outside the development environment, we can now build a self-cont
 MIX_ENV=prod mix release
 ```
 
-This compiles the application and bundles it together with the Erlang runtime into `_build/prod/rel/ex_broadcaster/`. The release can then be started on any compatible machine without Elixir or Mix installed:
+This compiles the application and bundles it together with the Erlang runtime into `_build/prod/rel/ex_broadcaster/`.
+The release can then be started on any compatible machine without Elixir or Mix installed:
 ```sh
 _build/prod/rel/ex_broadcaster/bin/ex_broadcaster start
 ```
 
-Runtime configuration (ports, output directories, etc.) can be overridden via environment variables by adding a `config/runtime.exs` file that reads from `System.get_env/2`. This is the recommended way to configure the application per environment without recompiling.
+Before doing so, remember to set appropriate environmental variables: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `S3_BUCKET` and `S3_PREFIX`
+to make sure that the output playlist is stored in S3 bucket.
+
