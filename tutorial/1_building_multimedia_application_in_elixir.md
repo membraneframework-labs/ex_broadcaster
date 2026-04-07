@@ -65,6 +65,7 @@ It will create a template of a Mix project with the basic application structure.
 ## Dependencies
 In `mix.exs` add the required dependencies:
 ```elixir
+# mix.exs
 defp deps do 
 	[
       {:membrane_core, "~> 1.2"},
@@ -89,6 +90,7 @@ We need the following packages:
 ## Configuration
 In `config/config.exs` let’s add the following entries which we will use later:
 ```elixir
+# config/config.exs
 config :ex_broadcaster,
   rtmp_port: 1935,
   segment_duration_sec: 4,
@@ -112,6 +114,7 @@ The provided values are reasonable for a local development, but we will need to 
 # Application startup
 In `lib/ex_broadcaster/application.ex` add the `start/2` function:
 ```elixir
+# lib/ex_broadcaster/application.ex
 defmodule ExBroadcaster.Application do
   …
   @max_concurrent_pipelines Application.compile_env(:ex_broadcaster, :max_concurrent_pipelines, 10)
@@ -147,6 +150,7 @@ We use `:one_for_one` supervision strategy to ensure that each child is restarte
 RTMP Server requires providing `handle_new_client` callback. It’s called each time a new client connects to the server. Let’s implement it:
 
 ```elixir
+# lib/ex_broadcaster/application.ex
   def handle_new_client(client_ref, app, stream_key) do
     Logger.info(“[App] New RTMP client: app=#{app}, stream_key=#{stream_key}”)
 
@@ -197,6 +201,7 @@ The last thing we do is to return a module implementing the RTMP client behaviou
 # Building the pipeline
 Now let’s add a new pipeline module, e.g. `ExBroadcaster.Pipeline` and a simple `start_link/1` implementation that will start the Pipeline module with passed options. See the [`Membrane.Pipeline` docs](https://hexdocs.pm/membrane_core/Membrane.Pipeline.html) for the full list of available callbacks.
 ```elixir
+# lib/ex_broadcaster/pipeline.ex
 defmodule ExBroadcaster.Pipeline do
   use Membrane.Pipeline
 
@@ -219,6 +224,7 @@ We can start implementing Membrane pipeline callbacks.
 
 Let’s start with `handle_init`:
 ```elixir
+# lib/ex_broadcaster/pipeline.ex
   @impl true
   def handle_init(_ctx, opts) do
     client_ref = Keyword.fetch!(opts, :client_ref)
@@ -306,6 +312,7 @@ A few things worth noting:
 
 ### `build_spec/3`
 ```elixir
+# lib/ex_broadcaster/pipeline.ex
   defp build_spec(client_ref, storage, segment_duration) do
     rtmp_source =
       child(:rtmp_source, %Membrane.RTMP.SourceBin{client_ref: client_ref})
@@ -356,6 +363,7 @@ Each variant connects a transcoder output pad and a tee output pad into a shared
 `build_variant_spec/2` is called once per entry in `@variants` and returns two linked element chains — one for video, one for audio — that together form a single resolution variant:
 
 ```elixir
+# lib/ex_broadcaster/pipeline.ex
   defp build_variant_spec(variant, segment_duration) do
     %{id: id, track_name: name, width: w, height: h, bitrate: br, framerate: fps} = variant
 
@@ -406,7 +414,8 @@ The **audio chain** (`audio_to_muxer`) is simpler: it taps the `:audio_tee` at a
 ## Self-termination of the pipeline:
 
 We need to add `handle_element_end_of_stream` callback to ensure proper termination of the pipeline when the stream ends:
-```elixir 
+```elixir
+# lib/ex_broadcaster/pipeline.ex
   @impl true
   def handle_element_end_of_stream(:hls_sink, _pad, _ctx, state) do
     Logger.info("HLS sink finished. Terminating pipeline.")
@@ -447,6 +456,7 @@ The file-based storage works well for local development, but for production we w
 Add `ex_aws`, `ex_aws_s3`, and `hackney` (the HTTP client ExAws uses) to `mix.exs`:
 
 ```elixir
+# mix.exs
 {:ex_aws, "~> 2.6"},
 {:ex_aws_s3, "~> 2.5"},
 {:hackney, "~> 1.9"}
@@ -457,6 +467,7 @@ Add `ex_aws`, `ex_aws_s3`, and `hackney` (the HTTP client ExAws uses) to `mix.ex
 Create `lib/ex_broadcaster/storages/s3_storage.ex` and implement the [`Membrane.HTTPAdaptiveStream.Storage`](https://hexdocs.pm/membrane_http_adaptive_stream_plugin/Membrane.HTTPAdaptiveStream.Storage.html) behaviour. The behaviour requires two callbacks: `store/6` for writing a file and `remove/4` for deleting one. Each file is stored at `<prefix>/<name>` inside the bucket, where the prefix is set per-stream so concurrent streams do not collide.
 
 ```elixir
+# lib/ex_broadcaster/storages/s3_storage.ex
 defmodule ExBroadcaster.Storages.S3Storage do
   @behaviour Membrane.HTTPAdaptiveStream.Storage
 
@@ -503,6 +514,7 @@ AWS credentials and region are resolved by ExAws from the environment in the usu
 Update `config/config.exs` to add the S3-specific keys alongside the existing ones:
 
 ```elixir
+# config/config.exs
 config :ex_broadcaster,
   ...
   storage: :file,        # change to :s3 for production
@@ -514,6 +526,7 @@ config :ex_broadcaster,
 Now let's update `build_storage/1` function in `Application` to handles both values of `storage:` — it needs to construct either a `%FileStorage{}` or a `%S3Storage{}`:
 
 ```elixir
+# lib/ex_broadcaster/application.ex
 defp build_storage(stream_key) do
   case Application.get_env(:ex_broadcaster, :storage, :file) do
     :s3 ->
