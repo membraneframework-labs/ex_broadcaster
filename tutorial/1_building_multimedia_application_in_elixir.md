@@ -279,19 +279,15 @@ graph LR
 
     Transcoder -- "output(:p1080)\n1920×1080 · 4 Mbps · 30 fps" --> H264out1080
     Transcoder -- "output(:p720)\n1280×720 · 2.5 Mbps · 30 fps" --> H264out720
-    Transcoder -- "output(:p480)\n854×480 · 1 Mbps · 30 fps" --> H264out480
 
     H264out1080 -- "input({:video, :p1080})" --> CMAF1080
     H264out720  -- "input({:video, :p720})"  --> CMAF720
-    H264out480  -- "input({:video, :p480})"  --> CMAF480
 
     AudioTee -- "output(:p1080)\ninput({:audio, :p1080})" --> CMAF1080
     AudioTee -- "output(:p720)\ninput({:audio, :p720})"   --> CMAF720
-    AudioTee -- "output(:p480)\ninput({:audio, :p480})"   --> CMAF480
 
     CMAF1080 -- "input(:p1080)\ntrack_name: 1080p" --> HLS
     CMAF720  -- "input(:p720)\ntrack_name: 720p"  --> HLS
-    CMAF480  -- "input(:p480)\ntrack_name: 480p"  --> HLS
 ```
 
 A few things worth noting:
