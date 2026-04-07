@@ -9,13 +9,16 @@ defmodule ExBroadcaster.Application do
   Push a stream with FFmpeg or OBS to:
     rtmp://localhost:<port>/<app>/<stream_key>
 
-  HLS output is written to:
-    <hls_output_dir>/<stream_key>/index.m3u8
+  HLS output is uploaded to S3 under:
+    s3://<s3_bucket>/<s3_prefix>/<stream_key>/index.m3u8
   """
 
   use Application
 
   require Logger
+
+  alias Membrane.HTTPAdaptiveStream.Storages.FileStorage
+  alias ExBroadcaster.Storages.S3Storage
 
   @max_concurrent_pipelines Application.compile_env(:ex_broadcaster, :max_concurrent_pipelines, 10)
 
@@ -40,19 +43,17 @@ defmodule ExBroadcaster.Application do
   Called by `Membrane.RTMPServer` whenever a new RTMP publisher connects.
 
   Starts a supervised `ExBroadcaster.Pipeline` for the connection.
-  Each pipeline writes HLS output to its own sub-directory named after
+  Each pipeline uploads HLS output to its own S3 prefix named after
   the stream key, allowing multiple simultaneous streams.
   """
   def handle_new_client(client_ref, app, stream_key) do
     Logger.info("[App] New RTMP client: app=#{app}, stream_key=#{stream_key}")
 
-    base_dir = Application.get_env(:ex_broadcaster, :hls_output_dir, "output/hls")
     segment_duration_sec = Application.get_env(:ex_broadcaster, :segment_duration_sec, 4)
-    output_dir = Path.join(base_dir, stream_key)
 
     pipeline_opts = [
       client_ref: client_ref,
-      output_dir: output_dir,
+      storage: build_storage(stream_key),
       segment_duration: Membrane.Time.seconds(segment_duration_sec)
     ]
 
@@ -74,5 +75,20 @@ defmodule ExBroadcaster.Application do
     end
 
     Membrane.RTMP.Source.ClientHandlerImpl
+  end
+
+  defp build_storage(stream_key) do
+    case Application.get_env(:ex_broadcaster, :storage, :s3) do
+      :s3 ->
+        bucket = Application.fetch_env!(:ex_broadcaster, :s3_bucket)
+        prefix = Application.get_env(:ex_broadcaster, :s3_prefix, "hls")
+        %S3Storage{bucket: bucket, prefix: prefix <> "/" <> stream_key}
+
+      :file ->
+        base_dir = Application.get_env(:ex_broadcaster, :hls_output_dir, "output/hls")
+        output_dir = Path.join(base_dir, stream_key)
+        File.mkdir_p!(output_dir)
+        %FileStorage{directory: output_dir}
+    end
   end
 end

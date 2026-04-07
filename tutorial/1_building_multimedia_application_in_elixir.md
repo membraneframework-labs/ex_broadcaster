@@ -91,18 +91,20 @@ In `config/config.exs` let’s add the following entries which we will use later
 ```elixir
 config :ex_broadcaster,
   rtmp_port: 1935,
-  hls_output_dir: "output/hls",
   segment_duration_sec: 4,
   http_port: 8080,
-  max_concurrent_pipelines: 10
+  max_concurrent_pipelines: 10,
+  storage: :file,
+  hls_output_dir: "output/hls"
 ```
 We specify the following entries:
 
 - `rtmp_port` — (TCP) port at which RTMP server will be listening
-- `hls_output_dir` — path to the directory where HLS playlist will be generated
 - `segment_duration_sec` — duration of each fragmented `.mp4` CMAF segment (expressed in seconds)
 - `http_port` — port at which the generated HLS playlist will be served via HTTP server
 - `max_concurrent_pipelines` — limits the number of pipelines which can be run at once
+- `storage` — selects the storage backend; `:file` writes segments to local disk (used here for development)
+- `hls_output_dir` — path to the directory where HLS output will be written when `storage: :file` is used
 
 The provided values are reasonable for a local development, but we will need to change them later, when we deploy the application.
 
@@ -146,22 +148,20 @@ RTMP Server requires providing `handle_new_client` callback. It’s called each 
 
 ```elixir
   def handle_new_client(client_ref, app, stream_key) do
-    Logger.info("[App] New RTMP client: app=#{app}, stream_key=#{stream_key}")
+    Logger.info(“[App] New RTMP client: app=#{app}, stream_key=#{stream_key}”)
 
-    base_dir = Application.get_env(:ex_broadcaster, :hls_output_dir, "output/hls")
     segment_duration_sec = Application.get_env(:ex_broadcaster, :segment_duration_sec, 4)
-    output_dir = Path.join(base_dir, stream_key)
 
     pipeline_opts = [
       client_ref: client_ref,
-      output_dir: output_dir,
+      storage: build_storage(stream_key),
       segment_duration: Membrane.Time.seconds(segment_duration_sec)
     ]
 
     %{active: active} = DynamicSupervisor.count_children(__MODULE__.PipelineSupervisor)
 
     if active >= @max_concurrent_pipelines do
-      Logger.warning("[App] Rejecting client (stream_key=#{stream_key}): reached limit of #{@max_concurrent_pipelines} concurrent pipelines")
+      Logger.warning(“[App] Rejecting client (stream_key=#{stream_key}): reached limit of #{@max_concurrent_pipelines} concurrent pipelines”)
     else
       case DynamicSupervisor.start_child(
              __MODULE__.PipelineSupervisor,
@@ -177,9 +177,18 @@ RTMP Server requires providing `handle_new_client` callback. It’s called each 
 
     Membrane.RTMP.Source.ClientHandlerImpl
   end
+
+  defp build_storage(stream_key) do
+    base_dir = Application.get_env(:ex_broadcaster, :hls_output_dir, “output/hls”)
+    output_dir = Path.join(base_dir, stream_key)
+    File.mkdir_p!(output_dir)
+    %Membrane.HTTPAdaptiveStream.Storages.FileStorage{directory: output_dir}
+  end
 ```
 
 In this callback we assert that no more than `max_concurrent_pipelines` would be running at once after spawning a new pipeline - if not, we attempt to spawn the new pipeline under the `DynamicSupervisor` spawned in the application. We provide the desired options to the pipeline (we will talk about these options later) and check if the pipeline startup was successful.
+
+`build_storage/1` constructs the storage backend for the pipeline. It reads `hls_output_dir` from config, appends the stream key so that concurrent streams do not overwrite each other's files, ensures the directory exists, and returns a `FileStorage` struct. Keeping this logic separate from `handle_new_client` makes it straightforward to swap in a different backend later without touching the rest of the callback.
 
 We use `Supervisor.child_spec/2` to set `restart: :temporary` on the pipeline. Each pipeline is bound to a specific RTMP connection — if it crashes, the TCP connection is gone and the `client_ref` is stale, so restarting it would be pointless. With `restart: :temporary` the supervisor simply removes the pipeline when it exits without attempting to restart it.
 
@@ -213,24 +222,21 @@ Let’s start with `handle_init`:
   @impl true
   def handle_init(_ctx, opts) do
     client_ref = Keyword.fetch!(opts, :client_ref)
-    output_dir = Keyword.fetch!(opts, :output_dir)
+    storage = Keyword.fetch!(opts, :storage)
     segment_duration = Keyword.get(opts, :segment_duration, Membrane.Time.seconds(4))
 
-    File.mkdir_p!(output_dir)
-    Logger.info("Starting HLS output in #{output_dir}")
+    spec = build_spec(client_ref, storage, segment_duration)
 
-    spec = build_spec(client_ref, output_dir, segment_duration)
-
-    {[spec: spec], %{output_dir: output_dir}}
+    {[spec: spec], %{}}
   end
 ```
 
 This callback reads the desired options:
-`client_ref` - RTMP client reference. Each time a new client connects to the RTMP server you will obtain this reference and you will be able to pass it to the `Membrane.RTMP.SourceBin` component.
-  `output_dir` - path to a place in filesystem where the output HLS playlist and segments will be put
-`segment_duration` - duration of each HLS segment. The shorter it is, the smaller streamer -> viewer latency you should observe (you cannot reduce it indefinitely as each segment must contain at least one keyframe, and generating keyframes too frequently increases bitrate and encoder load). A value of 2–6 seconds is typical for live streaming.
+- `client_ref` — RTMP client reference. Each time a new client connects to the RTMP server you will obtain this reference and you will be able to pass it to the `Membrane.RTMP.SourceBin` component.
+- `storage` — an already-constructed storage struct (built by `build_storage/1` in the application). The pipeline passes it straight to the HLS sink and has no knowledge of where data ends up.
+- `segment_duration` — duration of each HLS segment. The shorter it is, the smaller streamer → viewer latency you should observe (you cannot reduce it indefinitely as each segment must contain at least one keyframe, and generating keyframes too frequently increases bitrate and encoder load). A value of 2–6 seconds is typical for live streaming.
 
-Then we create a filesystem directory `output_dir` and return the pipeline structure within the `spec` action. Let’s discuss the pipeline structure (and `build_spec` private function implementation).
+Then we return the pipeline structure within the `spec` action. Let’s discuss the pipeline structure (and `build_spec` private function implementation).
 
 ## Pipeline structure:
 
@@ -300,7 +306,7 @@ A few things worth noting:
 
 ### `build_spec/3`
 ```elixir
-  defp build_spec(client_ref, output_dir, segment_duration) do
+  defp build_spec(client_ref, storage, segment_duration) do
     rtmp_source =
       child(:rtmp_source, %Membrane.RTMP.SourceBin{client_ref: client_ref})
 
@@ -326,7 +332,7 @@ A few things worth noting:
           module: HTTPAdaptiveStream.HLS
         },
         track_config: %HTTPAdaptiveStream.Sink.TrackConfig{},
-        storage: %HTTPAdaptiveStream.Storages.FileStorage{directory: output_dir}
+        storage: storage
       })
 
     variant_specs = Enum.flat_map(@variants, &build_variant_spec(&1, segment_duration))
@@ -340,7 +346,7 @@ A few things worth noting:
 - **`rtmp_source`** — `Membrane.RTMP.SourceBin` receives the incoming RTMP connection identified by `client_ref` and demuxes it, exposing separate `:video` and `:audio` output pads.
 - **`video_branch`** — takes the raw H.264 video, runs it through `Membrane.H264.Parser` (reformatting to Annex B, AU-aligned) to produce a stream the transcoder can consume, then hands it off to `Membrane.VKVideo.Transcoder` for GPU-accelerated re-encoding.
 - **`audio_branch`** — takes the AAC audio stream, parses it into raw ADTS-stripped frames with ESDS config, then feeds it into a `Membrane.Tee` so the single audio stream can be fanned out to all resolution variants without re-encoding.
-- **`hls_sink`** — `HTTPAdaptiveStream.Sink` collects CMAF tracks from all variants and writes fMP4 segments plus a multi-variant `index.m3u8` playlist to `output_dir`.
+- **`hls_sink`** — `HTTPAdaptiveStream.Sink` collects CMAF tracks from all variants and writes fMP4 segments plus a multi-variant `index.m3u8` playlist via the provided `storage` backend.
 
 Apart from there there we define `variant_specs` — one spec per entry in `@variants`, built by `build_variant_spec/2` (covered in the next section).
 Each variant connects a transcoder output pad and a tee output pad into a shared CMAF muxer, which feeds its track into the HLS sink.

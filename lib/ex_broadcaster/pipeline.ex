@@ -2,7 +2,7 @@ defmodule ExBroadcaster.Pipeline do
   @moduledoc """
   Membrane pipeline that receives a single RTMP stream, transcodes it to
   multiple H.264 variants using the GPU (via `Membrane.VKVideo.Transcoder`),
-  and writes an adaptive HLS manifest + fMP4 segments to disk.
+  and uploads an adaptive HLS manifest + fMP4 segments to Amazon S3.
 
   Topology
   --------
@@ -68,15 +68,12 @@ defmodule ExBroadcaster.Pipeline do
   @impl true
   def handle_init(_ctx, opts) do
     client_ref = Keyword.fetch!(opts, :client_ref)
-    output_dir = Keyword.fetch!(opts, :output_dir)
+    storage = Keyword.fetch!(opts, :storage)
     segment_duration = Keyword.get(opts, :segment_duration, Membrane.Time.seconds(4))
 
-    File.mkdir_p!(output_dir)
-    Logger.info("Starting HLS output in #{output_dir}")
+    spec = build_spec(client_ref, storage, segment_duration)
 
-    spec = build_spec(client_ref, output_dir, segment_duration)
-
-    {[spec: spec], %{output_dir: output_dir}}
+    {[spec: spec], %{}}
   end
 
   @impl true
@@ -89,7 +86,7 @@ defmodule ExBroadcaster.Pipeline do
     {[], state}
   end
 
-  defp build_spec(client_ref, output_dir, segment_duration) do
+  defp build_spec(client_ref, storage, segment_duration) do
     rtmp_source =
       child(:rtmp_source, %Membrane.RTMP.SourceBin{client_ref: client_ref})
 
@@ -115,7 +112,7 @@ defmodule ExBroadcaster.Pipeline do
           module: HTTPAdaptiveStream.HLS
         },
         track_config: %HTTPAdaptiveStream.Sink.TrackConfig{},
-        storage: %HTTPAdaptiveStream.Storages.FileStorage{directory: output_dir}
+        storage: storage
       })
 
     variant_specs = Enum.flat_map(@variants, &build_variant_spec(&1, segment_duration))
