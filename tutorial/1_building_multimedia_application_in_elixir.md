@@ -31,31 +31,34 @@ For more information, you can take a look at [vk-video](https://crates.io/crates
 In the next chapters we will focus on deploying the application in the cloud environment so you won’t need to run the application locally, so this requirement won’t apply anymore.
 
 If you are new to Membrane, please take a look at the [Getting Started with Membrane](https://hexdocs.pm/membrane_core/01_introduction-2.html) guide as it presents basic Membrane concepts and shows how to write your own simple pipelines - we won’t discuss these things in detail in this tutorial.
+For development purposes, make sure you have FFmpeg installed.
 
 # System overview
+
+The application is a standard Elixir OTP application built around three top-level processes started by the supervisor:
+
+- **`Membrane.RTMPServer`** — a TCP server listening on the configured RTMP port. Each time a new client connects it calls `handle_new_client/3`, which decides whether to accept the stream.
+- **`DynamicSupervisor`** — manages one `ExBroadcaster.Pipeline` process per active stream. Pipelines are started on demand when a client connects and are supervised independently (`:one_for_one`), so a crash in one pipeline does not affect others. The number of concurrently running pipelines is bounded by `max_concurrent_pipelines`.
+- **`Bandit` HTTP server** — serves the HLS playlist files and fMP4 segments written to disk by the pipelines, so viewers can play back the stream.
+
+Each pipeline is entirely self-contained: it owns the full processing chain from RTMP ingestion through GPU-accelerated transcoding to HLS segment writing. Pipelines for different stream keys write to separate output directories and operate without any shared mutable state.
+
 ```mermaid
 graph LR
-   RTMP([RTMP])
+    Streamer([Streamer])
+    RTMPServer["Membrane.RTMPServer\n(TCP :1935)"]
+    DynSup["DynamicSupervisor\n(PipelineSupervisor)"]
+    Pipeline["ExBroadcaster.Pipeline\n(one per stream key)"]
+    Disk[("HLS output\n(fMP4 + .m3u8)")]
+    HTTP["Bandit HTTP Server\n(TCP :8080)"]
+    Viewer([Viewer])
 
-
-   RTMP -- ":video" --> Transcoder[Transcoder]
-   RTMP -- ":audio" --> Tee[Tee]
-
-
-   Transcoder -- ":output(1080p)" --> Muxer1080[CMAF.Muxer1080p]
-   Transcoder -- ":output(720p)" --> Muxer720[CMAF.Muxer720p]
-   Transcoder -- ":output(480p)" --> Muxer480[CMAF.Muxer480p]
-
-
-   Tee -- ":output(1080p)" --> Muxer1080
-   Tee -- ":output(720p)" --> Muxer720
-   Tee -- ":output(480p)" --> Muxer480
-
-
-   Muxer1080 --> HLS([HLS])
-   Muxer720 --> HLS
-   Muxer480 --> HLS
-
+    Streamer -- "RTMP" --> RTMPServer
+    RTMPServer -- "handle_new_client" --> DynSup
+    DynSup -- "start_child / supervise" --> Pipeline
+    Pipeline -- "write segments" --> Disk
+    HTTP -- "serve files" --> Disk
+    Viewer -- "HLS request" --> HTTP
 ```
 
 # Creating a new project
@@ -236,8 +239,74 @@ This callback reads the desired options:
 
 Then we create a filesystem directory `output_dir` and return the pipeline structure within the `spec` action. Let’s discuss the pipeline structure (and `build_spec` private function implementation).
 
-## Pipeline structure: 
-<TODO - diagram pipeline’a>
+## Pipeline structure:
+
+Each `ExBroadcaster.Pipeline` is a static Membrane pipeline built entirely in `handle_init/2`. The topology has two branches coming out of the RTMP source — one for video, one for audio — that converge into per-variant CMAF muxers before reaching the shared HLS sink.
+
+```mermaid
+graph LR
+    subgraph Source
+        RTMP["Membrane.RTMP.SourceBin\n(client_ref)"]
+    end
+
+    subgraph "Video branch"
+        H264in["Membrane.H264.Parser\n(annexb · au-aligned)"]
+        Transcoder["Membrane.VKVideo.Transcoder\n(GPU · 3 output pads)"]
+    end
+
+    subgraph "Audio branch"
+        AACParser["Membrane.AAC.Parser\n(esds · no encapsulation)"]
+        AudioTee["Membrane.Tee\n(3 output pads)"]
+    end
+
+    subgraph "1080p variant"
+        H264out1080["Membrane.H264.Parser\n(avc1 · au-aligned)"]
+        CMAF1080["Membrane.MP4.CMAF.Muxer\n(1080p)"]
+    end
+
+    subgraph "720p variant"
+        H264out720["Membrane.H264.Parser\n(avc1 · au-aligned)"]
+        CMAF720["Membrane.MP4.CMAF.Muxer\n(720p)"]
+    end
+
+    subgraph "480p variant"
+        H264out480["Membrane.H264.Parser\n(avc1 · au-aligned)"]
+        CMAF480["Membrane.MP4.CMAF.Muxer\n(480p)"]
+    end
+
+    subgraph Sink
+        HLS["HTTPAdaptiveStream.Sink\n(index.m3u8 + fMP4 segments)"]
+    end
+
+    RTMP -- ":video" --> H264in
+    RTMP -- ":audio" --> AACParser
+
+    H264in --> Transcoder
+    AACParser --> AudioTee
+
+    Transcoder -- "output(:p1080)\n1920×1080 · 4 Mbps · 30 fps" --> H264out1080
+    Transcoder -- "output(:p720)\n1280×720 · 2.5 Mbps · 30 fps" --> H264out720
+    Transcoder -- "output(:p480)\n854×480 · 1 Mbps · 30 fps" --> H264out480
+
+    H264out1080 -- "input({:video, :p1080})" --> CMAF1080
+    H264out720  -- "input({:video, :p720})"  --> CMAF720
+    H264out480  -- "input({:video, :p480})"  --> CMAF480
+
+    AudioTee -- "output(:p1080)\ninput({:audio, :p1080})" --> CMAF1080
+    AudioTee -- "output(:p720)\ninput({:audio, :p720})"   --> CMAF720
+    AudioTee -- "output(:p480)\ninput({:audio, :p480})"   --> CMAF480
+
+    CMAF1080 -- "input(:p1080)\ntrack_name: 1080p" --> HLS
+    CMAF720  -- "input(:p720)\ntrack_name: 720p"  --> HLS
+    CMAF480  -- "input(:p480)\ntrack_name: 480p"  --> HLS
+```
+
+A few things worth noting:
+
+- **Two H264 parsers per video path** — the first one (`H264in`) converts the incoming stream to Annex B byte-stream format required by the transcoder; the second ones (`H264out*`) convert each transcoder output back to the `avc1` packetized format required by the CMAF container. They are completely separate element instances with different configurations.
+- **`Membrane.Tee` for audio fan-out** — audio is decoded only once and replicated to all three CMAF muxers via dynamic output pads. There is no audio re-encoding.
+- **One `CMAF.Muxer` per variant** — each muxer receives exactly one video pad and one audio pad, producing a single interleaved fMP4 track that HLS expects.
+- **Dynamic pads on `Transcoder` and `Tee`** — output pads are opened at link time with `via_out(Pad.ref(:output, id), ...)`, passing encoding parameters (resolution, bitrate, scaling algorithm) as pad options to the transcoder.
 
 ```elixir
   defp build_spec(client_ref, output_dir, segment_duration) do
@@ -368,4 +437,7 @@ The HLS output will be written to `output/hls/key/` and served by the built-in H
 ```
 http://localhost:8080/key/index.m3u8
 ```
-You can open this URL directly in a browser with native HLS support (e.g. Safari), or use a player like [hls.js demo](https://hlsjs.video-dev.org/demo/) to play it back.
+You can open this URL directly in a browser with native HLS support (e.g. new Chrome or Safari) or use `ffplay`:
+```
+ffplay http://localhost:8080/key/index.m3u8
+```
