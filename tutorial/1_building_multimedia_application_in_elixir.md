@@ -1,4 +1,4 @@
-Bringing Membrane to production
+# Bringing Membrane to production
 
 This article is the first in a series of articles about building a fully functional multimedia processing solution using Membrane Framework. Stay tuned for the forthcoming ones!
 
@@ -15,14 +15,9 @@ Below there is a list of steps we need to take to achieve this goal:
 4. **Ensure application scalability** with the use of clustering on K8s
 5. **Deploy the application** in a cloud environment, with appropriate configuration of runners to take advantage of GPU encoding and decoding
 6. **Configure cloud CDN** to ensure smooth broadcasting of the stream
-7. **Add metrics**
+7. **Add observability**
 
-
-
-
-
-
-
+In this chapter, we will cover first 3 of these steps!
 
 # Prerequisites
 In this chapter we will create an Elixir application and run it locally. Since the application will be performing hardware-accelerated video transcoding with the use of Vulkan Video Extensions, you need a Linux machine with a Vulkan-capable GPU (NVIDIA or AMD) with Mesa drivers and Vulkan Video extension support.
@@ -31,34 +26,34 @@ For more information, you can take a look at [vk-video](https://crates.io/crates
 In the next chapters we will focus on deploying the application in the cloud environment so you won’t need to run the application locally, so this requirement won’t apply anymore.
 
 If you are new to Membrane, please take a look at the [Getting Started with Membrane](https://hexdocs.pm/membrane_core/01_introduction-2.html) guide as it presents basic Membrane concepts and shows how to write your own simple pipelines - we won’t discuss these things in detail in this tutorial.
-For development purposes, make sure you have FFmpeg installed.
+For development purposes, make sure you have [FFmpeg](https://ffmpeg.org/) installed.
 
 # System overview
 
-The application is a standard Elixir OTP application built around three top-level processes started by the supervisor:
+The system consists of three main stages: **ingestion**, **transcoding**, and **distribution**.
 
-- **`Membrane.RTMPServer`** — a TCP server listening on the configured RTMP port. Each time a new client connects it calls `handle_new_client/3`, which decides whether to accept the stream.
-- **`DynamicSupervisor`** — manages one `ExBroadcaster.Pipeline` process per active stream. Pipelines are started on demand when a client connects and are supervised independently (`:one_for_one`), so a crash in one pipeline does not affect others. The number of concurrently running pipelines is bounded by `max_concurrent_pipelines`.
-- **`Bandit` HTTP server** — serves the HLS playlist files and fMP4 segments written to disk by the pipelines, so viewers can play back the stream.
+**Ingestion** — the streamer publishes a live video feed over RTMP (Real-Time Messaging Protocol). RTMP is a widely supported streaming protocol, originally developed by Adobe, that carries audio and video data over a persistent TCP connection. The server accepts the incoming TCP connection and extracts the raw audio and video streams from the RTMP envelope.
 
-Each pipeline is entirely self-contained: it owns the full processing chain from RTMP ingestion through GPU-accelerated transcoding to HLS segment writing. Pipelines for different stream keys write to separate output directories and operate without any shared mutable state.
+**Transcoding** — the incoming stream is typically encoded at a single resolution and bitrate chosen by the streamer. To serve viewers with varying network conditions and device capabilities, we transcode it into multiple output variants (e.g. 1080p, 720p, 480p), each at a different resolution and target bitrate. This is done using the GPU's hardware video acceleration, which is far more efficient than software-based encoding for this kind of workload.
+
+**Distribution** — the transcoded variants are packaged and delivered to viewers via HLS (HTTP Live Streaming). Each variant is split into short media segments — fragmented MP4 files (fMP4, also known as CMAF — Common Media Application Format) — and an HTTP server exposes two kinds of playlist files alongside them:
+- a **master playlist** (`.m3u8`) listing all available variants with their bandwidth and resolution, so the player can pick the most appropriate one;
+- a **variant playlist** (`.m3u8`) per resolution, listing the individual segments in order so the player can fetch and play them sequentially.
 
 ```mermaid
 graph LR
     Streamer([Streamer])
-    RTMPServer["Membrane.RTMPServer\n(TCP :1935)"]
-    DynSup["DynamicSupervisor\n(PipelineSupervisor)"]
-    Pipeline["ExBroadcaster.Pipeline\n(one per stream key)"]
-    Disk[("HLS output\n(fMP4 + .m3u8)")]
-    HTTP["Bandit HTTP Server\n(TCP :8080)"]
+    Ingest["RTMP Ingest\n(TCP server)"]
+    Transcode["Transcoder\n(GPU-accelerated)"]
+    Segments[("HLS output\nmaster playlist · variant playlists\nfMP4 segments")]
+    HTTP["HTTP Server"]
     Viewer([Viewer])
 
-    Streamer -- "RTMP" --> RTMPServer
-    RTMPServer -- "handle_new_client" --> DynSup
-    DynSup -- "start_child / supervise" --> Pipeline
-    Pipeline -- "write segments" --> Disk
-    HTTP -- "serve files" --> Disk
-    Viewer -- "HLS request" --> HTTP
+    Streamer -- "RTMP\n(over TCP)" --> Ingest
+    Ingest -- "audio + video" --> Transcode
+    Transcode -- "1080p / 720p / 480p\nfMP4 segments + .m3u8 playlists" --> Segments
+    HTTP -- "serve" --> Segments
+    Viewer -- "HLS\n(HTTP)" --> HTTP
 ```
 
 # Creating a new project
