@@ -438,9 +438,113 @@ http://localhost:8080/key/index.m3u8
 ```
 You can open this URL directly in a browser with native HLS support (e.g. Safari or Chrome). Alternatively, paste it into the [hls.js demo player](https://hlsjs.video-dev.org/demo/).
 
+## Adding S3 storage
+
+The file-based storage works well for local development, but for production we want to upload segments directly to S3 so they can be served by a CDN. Because the pipeline accepts a plain storage struct and knows nothing about where data lands, adding a second backend requires no changes to the pipeline at all.
+
+### Dependencies
+
+Add `ex_aws`, `ex_aws_s3`, and `hackney` (the HTTP client ExAws uses) to `mix.exs`:
+
+```elixir
+{:ex_aws, "~> 2.6"},
+{:ex_aws_s3, "~> 2.5"},
+{:hackney, "~> 1.9"}
+```
+
+### Implementing the storage
+
+Create `lib/ex_broadcaster/storages/s3_storage.ex` and implement the [`Membrane.HTTPAdaptiveStream.Storage`](https://hexdocs.pm/membrane_http_adaptive_stream_plugin/Membrane.HTTPAdaptiveStream.Storage.html) behaviour. The behaviour requires two callbacks: `store/6` for writing a file and `remove/4` for deleting one. Each file is stored at `<prefix>/<name>` inside the bucket, where the prefix is set per-stream so concurrent streams do not collide.
+
+```elixir
+defmodule ExBroadcaster.Storages.S3Storage do
+  @behaviour Membrane.HTTPAdaptiveStream.Storage
+
+  require Logger
+
+  @enforce_keys [:bucket, :prefix]
+  defstruct @enforce_keys
+
+  @impl true
+  def init(%__MODULE__{} = config), do: config
+
+  @impl true
+  def store(_parent_id, name, content, _metadata, _ctx, %{bucket: bucket, prefix: prefix} = state) do
+    key = prefix <> "/" <> name
+
+    case bucket |> ExAws.S3.put_object(key, content) |> ExAws.request() do
+      {:ok, _} -> {:ok, state}
+      {:error, reason} ->
+        Logger.error("S3 upload failed for #{key}: #{inspect(reason)}")
+        {{:error, reason}, state}
+    end
+  end
+
+  @impl true
+  def remove(_parent_id, name, _ctx, %{bucket: bucket, prefix: prefix} = state) do
+    key = prefix <> "/" <> name
+
+    case bucket |> ExAws.S3.delete_object(key) |> ExAws.request() do
+      {:ok, _} -> {:ok, state}
+      {:error, reason} ->
+        Logger.warning("S3 delete failed for #{key}: #{inspect(reason)}")
+        {{:error, reason}, state}
+    end
+  end
+end
+```
+
+`init/1` is called once by the HLS sink before streaming starts and simply returns the config struct as state. `store/6` and `remove/4` are then called for every segment and manifest file as the stream progresses.
+
+AWS credentials and region are resolved by ExAws from the environment in the usual way — `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` environment variables, an instance role, or entries in `config/runtime.exs`.
+
+### Selecting the backend
+
+Update `config/config.exs` to add the S3-specific keys alongside the existing ones:
+
+```elixir
+config :ex_broadcaster,
+  ...
+  storage: :file,        # change to :s3 for production
+  hls_output_dir: "output/hls",
+  s3_bucket: "your-bucket-name",
+  s3_prefix: "hls"
+```
+
+Now let's update `build_storage/1` function in `Application` to handles both values of `storage:` — it needs to construct either a `%FileStorage{}` or a `%S3Storage{}`:
+
+```elixir
+defp build_storage(stream_key) do
+  case Application.get_env(:ex_broadcaster, :storage, :file) do
+    :s3 ->
+      bucket = Application.fetch_env!(:ex_broadcaster, :s3_bucket)
+      prefix = Application.get_env(:ex_broadcaster, :s3_prefix, "hls")
+      %S3Storage{bucket: bucket, prefix: prefix <> "/" <> stream_key}
+
+    :file ->
+      base_dir = Application.get_env(:ex_broadcaster, :hls_output_dir, "output/hls")
+      output_dir = Path.join(base_dir, stream_key)
+      File.mkdir_p!(output_dir)
+      %FileStorage{directory: output_dir}
+  end
+end
+```
+
+Switching to S3 in production is then a single config change — or, more practically, driven by an environment variable in `config/runtime.exs`:
+
+```elixir
+# config/runtime.exs
+import Config
+
+config :ex_broadcaster,
+  storage: if(System.get_env("S3_BUCKET"), do: :s3, else: :file),
+  s3_bucket: System.get_env("S3_BUCKET", ""),
+  s3_prefix: System.get_env("S3_PREFIX", "hls")
+```
+
 ## Building a release
 
-For deployment outside the development environment, build a self-contained release with:
+For deployment outside the development environment, we can now build a self-contained release with:
 ```sh
 MIX_ENV=prod mix release
 ```
