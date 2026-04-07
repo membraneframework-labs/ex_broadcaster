@@ -1,6 +1,6 @@
 # Bringing Membrane to production
 
-This article is the first in a series on building a fully functional multimedia processing solution with Membrane Framework.
+This article is the first in a series on building a fully functional multimedia processing solution with [Membrane Framework](https://membrane.stream). The complete source code for this chapter is available at [membraneframework-labs/tutorial_vk_video](https://github.com/membraneframework-labs/tutorial_vk_video).
 
 We will build a live video broadcasting system: one that ingests an RTMP stream, transcodes it into multiple resolutions to accommodate viewers with varying network conditions, and distributes it globally over HLS. Systems like this are the backbone of platforms such as Twitch — they allow user-generated content to be broadcast simultaneously to thousands of viewers around the world, with the lowest possible end-to-end latency. They are also offered as managed services (e.g. AWS IVS) so that product teams can embed live streaming without building the infrastructure themselves.
 
@@ -79,12 +79,12 @@ defp deps do
 ```
 We need the following packages:
 
-- `membrane_core` — to specify the pipeline structure
-- `membrane_vk_video_plugin` — providing hardware transcoding capabilities
-- `membrane_rtmp_plugin` — for RTMP ingestion source
-- `membrane_http_adaptive_stream_plugin` — for HLS playlist generation
-- `membrane_mp4_plugin` — for wrapping stream in CMAF container
-- `membrane_h26x_plugin` and `membrane_aac_plugin` — to change the stream structure of video and audio streams (so that they “fit” in CMAF container)
+- [`membrane_core`](https://hexdocs.pm/membrane_core) — to specify the pipeline structure
+- [`membrane_vk_video_plugin`](https://hexdocs.pm/membrane_vk_video_plugin) — providing hardware transcoding capabilities
+- [`membrane_rtmp_plugin`](https://hexdocs.pm/membrane_rtmp_plugin) — for RTMP ingestion source
+- [`membrane_http_adaptive_stream_plugin`](https://hexdocs.pm/membrane_http_adaptive_stream_plugin) — for HLS playlist generation
+- [`membrane_mp4_plugin`](https://hexdocs.pm/membrane_mp4_plugin) — for wrapping stream in CMAF container
+- [`membrane_h26x_plugin`](https://hexdocs.pm/membrane_h26x_plugin) and [`membrane_aac_plugin`](https://hexdocs.pm/membrane_aac_plugin) — to change the stream structure of video and audio streams (so that they “fit” in CMAF container)
 
 ## Configuration
 In `config/config.exs` let’s add the following entries which we will use later:
@@ -186,7 +186,7 @@ We use `Supervisor.child_spec/2` to set `restart: :temporary` on the pipeline. E
 The last thing we do is to return a module implementing the RTMP client behaviour. In many circumstances we would need to implement this behaviour on our own, but since we want to use the Membrane.RTMP.Server with `Membrane.RTMP.Source`, we return `Membrane.RTMP.Source.ClientHandlerImpl` which is a preexisting implementation meant to be used with this common case.
 
 # Building the pipeline
-Now let’s add a new pipeline module, e.g. `ExBroadcaster.Pipeline` and a simple `start_link/1` implementation that will start the Pipeline module with passed options:
+Now let’s add a new pipeline module, e.g. `ExBroadcaster.Pipeline` and a simple `start_link/1` implementation that will start the Pipeline module with passed options. See the [`Membrane.Pipeline` docs](https://hexdocs.pm/membrane_core/Membrane.Pipeline.html) for the full list of available callbacks.
 ```elixir
 defmodule ExBroadcaster.Pipeline do
   use Membrane.Pipeline
@@ -432,10 +432,7 @@ The HLS output will be written to `output/hls/key/` and served by the built-in H
 ```
 http://localhost:8080/key/index.m3u8
 ```
-You can open this URL directly in a browser with native HLS support (e.g. new Chrome or Safari) or use `ffplay`:
-```
-ffplay http://localhost:8080/key/index.m3u8
-```
+You can open this URL directly in a browser with native HLS support (e.g. Safari or Chrome). Alternatively, paste it into the [hls.js demo player](https://hlsjs.video-dev.org/demo/).
 
 ## Building a release
 

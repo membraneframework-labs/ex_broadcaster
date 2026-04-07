@@ -1,21 +1,3 @@
 # ExBroadcaster
 
-**TODO: Add description**
-
-## Installation
-
-If [available in Hex](https://hex.pm/docs/publish), the package can be installed
-by adding `ex_broadcaster` to your list of dependencies in `mix.exs`:
-
-```elixir
-def deps do
-  [
-    {:ex_broadcaster, "~> 0.1.0"}
-  ]
-end
-```
-
-Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
-and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
-be found at <https://hexdocs.pm/ex_broadcaster>.
-
+This repository is the base project for the [Bringing Membrane to production](tutorial/1_building_multimedia_application_in_elixir.md) tutorial series on building a live video broadcasting system with [Membrane Framework](https://membrane.stream).
