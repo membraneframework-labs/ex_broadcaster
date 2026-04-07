@@ -137,9 +137,9 @@ On application startup we spawn:
 
 - RTMP server listening on chosen port
 - `DynamicSupervisor` under which we will spawn the pipelines handling particular streams. Since all its children will be independent from each other, we want it to use `:one_for_one` supervision strategy.
-- `Bandit` HTTP server
+- `Bandit` HTTP server — a minimal [Plug.Router](https://hexdocs.pm/plug/Plug.Router.html)-based server ([`http_server.ex`](https://github.com/membraneframework-labs/tutorial_vk_video/blob/main/lib/ex_broadcaster/http_server.ex)) that serves HLS playlists and fMP4 segments from the configured `hls_output_dir`. It sets appropriate cache headers — `no-cache` for `.m3u8` playlists (which change every segment) and a long `max-age` for segment files (immutable once written) — and allows CORS from any origin so browser-based players like hls.js work without a proxy. We include it here for local development only — in production, a CDN will take over content delivery.
 
-We use `:one_for_one` supervision strategy to ensure that each child is restarted independently from the other. 
+We use `:one_for_one` supervision strategy to ensure that each child is restarted independently from the other.
 
 ## RTMP Server
 RTMP Server requires providing `handle_new_client` callback. It’s called each time a new client connects to the server. Let’s implement it:
@@ -297,6 +297,8 @@ A few things worth noting:
 - **One `CMAF.Muxer` per variant** — each muxer receives exactly one video pad and one audio pad, producing a single interleaved fMP4 track that HLS expects.
 - **Dynamic pads on `Transcoder` and `Tee`** — output pads are opened at link time with `via_out(Pad.ref(:output, id), ...)`, passing encoding parameters (resolution, bitrate, scaling algorithm) as pad options to the transcoder.
 
+
+### `build_spec/3`
 ```elixir
   defp build_spec(client_ref, output_dir, segment_duration) do
     rtmp_source =
@@ -343,7 +345,7 @@ A few things worth noting:
 Apart from there there we define `variant_specs` — one spec per entry in `@variants`, built by `build_variant_spec/2` (covered in the next section).
 Each variant connects a transcoder output pad and a tee output pad into a shared CMAF muxer, which feeds its track into the HLS sink.
 
-## `build_variant_spec/2`
+### `build_variant_spec/2`
 
 `build_variant_spec/2` is called once per entry in `@variants` and returns two linked element chains — one for video, one for audio — that together form a single resolution variant:
 
