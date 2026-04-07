@@ -110,9 +110,9 @@ The provided values are reasonable for a local development, but we will need to 
 
 # Application startup
 In `lib/ex_broadcaster/application.ex` add the `start/2` function:
-```
+```elixir
 defmodule ExBroadcaster.Application do
- …
+  …
   @max_concurrent_pipelines Application.compile_env(:ex_broadcaster, :max_concurrent_pipelines, 10)
 
   @impl true
@@ -168,10 +168,10 @@ RTMP Server requires providing `handle_new_client` callback. It’s called each 
     else
       case DynamicSupervisor.start_child(
              __MODULE__.PipelineSupervisor,
-             {ExBroadcaster.Pipeline, pipeline_opts}
+             Supervisor.child_spec({ExBroadcaster.Pipeline, pipeline_opts}, restart: :temporary)
            ) do
         {:ok, _supervisor, pid} ->
-          Logger.info("[App] Pipeline started (pid=#{inspect(pid)}) for stream_key=#{stream_key}")
+          Logger.info(“[App] Pipeline started (pid=#{inspect(pid)}) for stream_key=#{stream_key}”)
 
         {:error, reason} ->
           Logger.error(“[App] Failed to start pipeline: #{inspect(reason)}”)
@@ -184,10 +184,12 @@ RTMP Server requires providing `handle_new_client` callback. It’s called each 
 
 In this callback we assert that no more than `max_concurrent_pipelines` would be running at once after spawning a new pipeline - if not, we attempt to spawn the new pipeline under the `DynamicSupervisor` spawned in the application. We provide the desired options to the pipeline (we will talk about these options later) and check if the pipeline startup was successful.
 
+We use `Supervisor.child_spec/2` to set `restart: :temporary` on the pipeline. Each pipeline is bound to a specific RTMP connection — if it crashes, the TCP connection is gone and the `client_ref` is stale, so restarting it would be pointless. With `restart: :temporary` the supervisor simply removes the pipeline when it exits without attempting to restart it.
+
 The last thing we do is to return a module implementing the RTMP client behaviour. In many circumstances we would need to implement this behaviour on our own, but since we want to use the Membrane.RTMP.Server with `Membrane.RTMP.Source`, we return `Membrane.RTMP.Source.ClientHandlerImpl` which is a preexisting implementation meant to be used with this common case.
 
 # Building the pipeline
-Now let’s add a new module, e.g. `ExBroadcaster.Pipeline` and add a simple `start_link/1` implementation that will start the Pipeline module with passed options:
+Now let’s add a new pipeline module, e.g. `ExBroadcaster.Pipeline` and a simple `start_link/1` implementation that will start the Pipeline module with passed options:
 ```elixir
 defmodule ExBroadcaster.Pipeline do
   use Membrane.Pipeline
@@ -205,14 +207,13 @@ defmodule ExBroadcaster.Pipeline do
   end
 end
 ```
-Now we can start implementing Membrane pipeline callbacks.
-
+We can start implementing Membrane pipeline callbacks.
 
 ## `handle_init` callback
 
 Let’s start with `handle_init`:
 ```elixir
- @impl true
+  @impl true
   def handle_init(_ctx, opts) do
     client_ref = Keyword.fetch!(opts, :client_ref)
     output_dir = Keyword.fetch!(opts, :output_dir)
@@ -415,9 +416,6 @@ We also add `handle_element_end_of_stream` callback to ensure proper termination
 ```
 We only need to `terminate: normal` when the end-of-stream signal arrives at `:hls_sink` sink element.
 
-
-
-   
 # Running the application
 ```sh
 mix run --no-halt

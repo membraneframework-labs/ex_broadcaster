@@ -63,7 +63,7 @@ defmodule ExBroadcaster.Application do
     else
       case DynamicSupervisor.start_child(
              __MODULE__.PipelineSupervisor,
-             {ExBroadcaster.Pipeline, pipeline_opts}
+             Supervisor.child_spec({ExBroadcaster.Pipeline, pipeline_opts}, restart: :temporary)
            ) do
         {:ok, _supervisor, pid} ->
           Logger.info("[App] Pipeline started (pid=#{inspect(pid)}) for stream_key=#{stream_key}")
