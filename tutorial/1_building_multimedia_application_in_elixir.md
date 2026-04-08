@@ -130,6 +130,11 @@ mix deps.get
 In `config/config.exs` let’s add the following entries which we will use later:
 ```elixir
 # config/config.exs
+config :mime, :types, %{
+  "application/vnd.apple.mpegurl" => ["m3u8"],
+  "video/mp4" => ["m4s", "mp4"],
+}
+
 config :ex_broadcaster,
   rtmp_port: 1935,
   segment_duration_sec: 4,
@@ -167,7 +172,7 @@ defmodule ExBroadcaster.Application do
     children = [
       {Membrane.RTMPServer, port: rtmp_port, handle_new_client: &__MODULE__.handle_new_client/3},
       {DynamicSupervisor, name: __MODULE__.PipelineSupervisor, strategy: :one_for_one},
-      {Bandit, plug: Broadcaster.HTTPServer, port: http_port}
+      {Bandit, plug: ExBroadcaster.HTTPServer, port: http_port}
     ]
 
     Logger.info("[App] RTMP server listening on port #{rtmp_port}")
@@ -380,7 +385,7 @@ A few things worth noting:
   required by the transcoder; the second ones (`H264out*`) convert each transcoder output back
   to the `avc1` packetized format required by the CMAF container.
   They are completely separate element instances with different configurations.
-- **`Membrane.Tee` for audio fan-out** — audio is decoded only once and replicated to all three CMAF muxers
+- **`Membrane.Tee` for audio fan-out** — audio is decoded only once and replicated to each CMAF muxer
   via dynamic output pads. There is no audio re-encoding.
 - **One `CMAF.Muxer` per variant** — each muxer receives exactly one video pad and one audio pad,
   producing a single interleaved fMP4 track that HLS expects.

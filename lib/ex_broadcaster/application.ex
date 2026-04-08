@@ -88,7 +88,7 @@ defmodule ExBroadcaster.Application do
   end
 
   defp build_storage(stream_key) do
-    case Application.get_env(:ex_broadcaster, :storage, :s3) do
+    case Application.get_env(:ex_broadcaster, :storage, :file) do
       :s3 ->
         bucket = Application.fetch_env!(:ex_broadcaster, :s3_bucket)
         prefix = Application.get_env(:ex_broadcaster, :s3_prefix, "hls")
