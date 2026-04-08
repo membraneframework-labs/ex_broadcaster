@@ -23,22 +23,15 @@ defmodule ExBroadcaster do
 
       ffmpeg -re -i input.mp4 \\
         -c:v copy -c:a copy \\
-        -f flv rtmp://localhost:1935/live/stream_key
+        -f flv rtmp://localhost:1935/ex_broadcaster/stream_key
 
   HLS output is available at:
 
       output/hls/<stream_key>/index.m3u8
 
-  Serve that directory with any HTTP server, e.g.:
-
-      python3 -m http.server 8080 --directory output/hls/<stream_key>
-
-  Then open `http://localhost:8080/index.m3u8` in a player that supports HLS.
+  Open `http://localhost:8080/index.m3u8` in a player that supports HLS.
 
   ## Hardware requirements
-
-  - Linux (Vulkan Video is Linux-only)
   - NVIDIA or AMD GPU with Mesa drivers and Vulkan Video extension support
-  - Vulkan SDK (for runtime Vulkan loader)
   """
 end

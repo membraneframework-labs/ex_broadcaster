@@ -1,6 +1,6 @@
 import Config
 
-# Register HLS-specific MIME types so Plug.Static serves correct Content-Type headers.
+# Content-Type headers mapping
 config :mime, :types, %{
   "application/vnd.apple.mpegurl" => ["m3u8"],
   "video/mp4" => ["m4s", "mp4"],

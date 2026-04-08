@@ -4,11 +4,11 @@ defmodule ExBroadcaster.Storages.S3Storage do
   and fMP4 segments to Amazon S3.
 
   Each file is stored under `<prefix>/<name>` inside the configured bucket.
-  Use a per-stream prefix (e.g. `"hls/<stream_key>"`) so that concurrent streams
-  do not collide.
+  Use a per-stream prefix (e.g. `"hls/<year>/<month>/<day>/<hour>/<stream_key>"`)
+  so that concurrent streams do not collide and output is time-partitioned.
 
-  AWS credentials and region are read from the standard ExAws configuration
-  (environment variables, instance role, or `config/runtime.exs`).
+  AWS credentials are resolved by ExAws from environment variables
+  (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`).
   """
 
   @behaviour Membrane.HTTPAdaptiveStream.Storage

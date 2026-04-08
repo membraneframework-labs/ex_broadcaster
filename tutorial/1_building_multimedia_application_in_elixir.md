@@ -693,8 +693,10 @@ The release can then be started on any compatible machine without Elixir or Mix 
 _build/prod/rel/ex_broadcaster/bin/ex_broadcaster start
 ```
 
-Before doing so, remember to set appropriate environmental variables:
-`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `S3_BUCKET` and `S3_PREFIX`
-to make sure that the output playlist is stored in S3 bucket.
+Before doing so, remember to set the `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`,
+`S3_BUCKET`, and `S3_PREFIX` environment variables.
 
-When you start streaming, you should see the segments start appearing in `$S3_BUCKET/$S3_PREFIX/<date>/<stream_key>`.
+When you start streaming, fMP4 segments and the live HLS playlist will appear in your bucket under
+`$S3_PREFIX/<year>/<month>/<day>/<hour>/<stream_key>/index.m3u8`.
+The playlist is a live HLS playlist — it is updated by the pipeline as each new segment is written,
+so a player can begin playback before the stream ends.

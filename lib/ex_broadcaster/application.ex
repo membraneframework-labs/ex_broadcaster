@@ -9,8 +9,13 @@ defmodule ExBroadcaster.Application do
   Push a stream with FFmpeg or OBS to:
     rtmp://localhost:<port>/<app>/<stream_key>
 
-  HLS output is uploaded to S3 under:
-    s3://<s3_bucket>/<s3_prefix>/<stream_key>/index.m3u8
+  The storage backend is selected via `config :ex_broadcaster, :storage`:
+
+  - `:file` — writes HLS output to `<hls_output_dir>/<stream_key>/`
+  - `:s3`   — uploads HLS output to `s3://<s3_bucket>/<s3_prefix>/<year>/<month>/<day>/<hour>/<stream_key>/`
+
+  AWS credentials for the S3 backend are resolved by ExAws from environment
+  variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`).
   """
 
   use Application
