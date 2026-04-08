@@ -45,6 +45,8 @@ If you are new to Membrane, please take a look at the [Getting Started with Memb
 as it presents basic Membrane concepts and shows how to write your own simple pipelines —
 we won’t discuss these things in detail in this tutorial.
 For development purposes, make sure you have [FFmpeg](https://ffmpeg.org/) installed.
+If you want to follow the S3 storage section, you will also need an S3 bucket and AWS credentials
+(`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`) with write access to that bucket.
 
 ## System overview
 
@@ -118,6 +120,11 @@ We need the following packages:
 - [`membrane_mp4_plugin`](https://hexdocs.pm/membrane_mp4_plugin) — for wrapping stream in CMAF container
 - [`membrane_h26x_plugin`](https://hexdocs.pm/membrane_h26x_plugin) and [`membrane_aac_plugin`](https://hexdocs.pm/membrane_aac_plugin) —
   to change the stream structure of video and audio streams (so that they "fit" in CMAF container)
+
+Download the dependencies with:
+```sh
+mix deps.get
+```
 
 ### Configuration
 In `config/config.exs` let’s add the following entries which we will use later:
