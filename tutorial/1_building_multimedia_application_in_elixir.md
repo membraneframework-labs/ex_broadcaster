@@ -27,7 +27,7 @@ Here is the plan:
 4. **Ensure scalability** with clustering on Kubernetes.
 5. **Deploy to the cloud** with GPU-capable runners for hardware-accelerated encoding and decoding.
 6. **Configure a CDN** for global distribution.
-7. **Add observability.**
+7. **Add observability** to track pipeline health, resource utilization, and stream activity in production.
 
 In this chapter we cover the first three steps.
 
