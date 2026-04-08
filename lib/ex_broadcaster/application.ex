@@ -77,12 +77,17 @@ defmodule ExBroadcaster.Application do
     Membrane.RTMP.Source.ClientHandlerImpl
   end
 
+  defp date_path do
+    %{year: y, month: m, day: d, hour: h} = DateTime.utc_now()
+    "#{y}/#{m}/#{d}/#{h}"
+  end
+
   defp build_storage(stream_key) do
     case Application.get_env(:ex_broadcaster, :storage, :s3) do
       :s3 ->
         bucket = Application.fetch_env!(:ex_broadcaster, :s3_bucket)
         prefix = Application.get_env(:ex_broadcaster, :s3_prefix, "hls")
-        %S3Storage{bucket: bucket, prefix: prefix <> "/" <> stream_key}
+        %S3Storage{bucket: bucket, prefix: Enum.join([prefix, date_path(), stream_key], "/")}
 
       :file ->
         base_dir = Application.get_env(:ex_broadcaster, :hls_output_dir, "output/hls")

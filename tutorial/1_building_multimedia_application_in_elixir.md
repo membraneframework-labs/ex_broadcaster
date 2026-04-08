@@ -638,12 +638,17 @@ it needs to construct either a `%FileStorage{}` or a `%S3Storage{}`:
 
 ```elixir
 # lib/ex_broadcaster/application.ex
+defp date_path do
+  %{year: y, month: m, day: d, hour: h} = DateTime.utc_now()
+  "#{y}/#{m}/#{d}/#{h}"
+end
+
 defp build_storage(stream_key) do
   case Application.get_env(:ex_broadcaster, :storage, :file) do
     :s3 ->
       bucket = Application.fetch_env!(:ex_broadcaster, :s3_bucket)
       prefix = Application.get_env(:ex_broadcaster, :s3_prefix, "hls")
-      %S3Storage{bucket: bucket, prefix: prefix <> "/" <> stream_key}
+      %S3Storage{bucket: bucket, prefix: Enum.join([prefix, date_path(), stream_key], "/")}
 
     :file ->
       base_dir = Application.get_env(:ex_broadcaster, :hls_output_dir, "output/hls")
@@ -653,6 +658,10 @@ defp build_storage(stream_key) do
   end
 end
 ```
+
+The `date_path/0` helper builds a `year/month/day/hour` path segment from the current UTC time,
+so each stream is stored under a time-partitioned prefix — e.g. `hls/2026/4/8/14/my-stream/`.
+This makes it easy to find recordings by time and to apply S3 lifecycle rules per time window.
 
 Switching to S3 in production is then a single config change —
 or, more practically, driven by an environment variable in `config/runtime.exs`:
