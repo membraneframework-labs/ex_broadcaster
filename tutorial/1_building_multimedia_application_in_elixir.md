@@ -534,9 +534,9 @@ In development environment we can do:
 mix run --no-halt
 ```
 
-Then we can start a test stream with FFmpeg:
+Then we can start a test stream with FFmpeg on `rtmp://localhost:1935/ex_broadcaster/key`:
 ```sh
-ffmpeg -re -f lavfi -i testsrc=size=1280x720:rate=30 -f lavfi -i sine=frequency=1000 -c:v libx264 -preset veryfast -tune zerolatency -pix_fmt yuv420p -c:a aac -f flv rtmp://localhost:1935/broadcaster/key
+ffmpeg -re -f lavfi -i testsrc=size=1280x720:rate=30 -f lavfi -i sine=frequency=1000 -c:v libx264 -preset veryfast -tune zerolatency -pix_fmt yuv420p -c:a aac -f flv rtmp://localhost:1935/ex_broadcaster/key
 ```
 
 The HLS output will be written to `output/hls/key/` and served by the built-in HTTP server at:
@@ -544,7 +544,8 @@ The HLS output will be written to `output/hls/key/` and served by the built-in H
 http://localhost:8080/key/index.m3u8
 ```
 You can open this URL directly in a browser with native HLS support (e.g. Safari or Chrome).
-Alternatively, paste it into the [hls.js demo player](https://hlsjs.video-dev.org/demo/).
+Alternatively, paste it into the [hls.js demo player](https://hlsjs.video-dev.org/demo/) (local HTTP server is configure to allow all CORS origins).
+You should be able to see that the resolution changes throughout based on your network condition or even manually change it.
 
 ## Adding S3 storage
 
@@ -660,6 +661,10 @@ or, more practically, driven by an environment variable in `config/runtime.exs`:
 # config/runtime.exs
 import Config
 
+# we need to tell ex_aws to read region from AWS_REGION env
+config :ex_aws,
+  region: {:system, "AWS_REGION"}
+
 config :ex_broadcaster,
   storage: if(System.get_env("S3_BUCKET"), do: :s3, else: :file),
   s3_bucket: System.get_env("S3_BUCKET", ""),
@@ -683,3 +688,4 @@ Before doing so, remember to set appropriate environmental variables:
 `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `S3_BUCKET` and `S3_PREFIX`
 to make sure that the output playlist is stored in S3 bucket.
 
+When you start streaming, you should see the segments start appearing in `$S3_BUCKET/$S3_PREFIX/<date>/<stream_key>`.
