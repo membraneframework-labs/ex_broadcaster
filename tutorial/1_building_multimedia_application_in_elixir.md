@@ -3,6 +3,7 @@
 This article is the first in a series on building a fully functional multimedia processing solution with [Membrane Framework](https://membrane.stream).
 The complete source code for this chapter is available at [membraneframework-labs/tutorial_vk_video](https://github.com/membraneframework-labs/tutorial_vk_video).
 
+## Introduction
 We will build a live video broadcasting system: one that ingests an RTMP stream,
 transcodes it into multiple resolutions to accommodate viewers with varying network conditions,
 and distributes it globally over HLS.
@@ -30,7 +31,7 @@ Here is the plan:
 
 In this chapter we cover the first three steps.
 
-# Prerequisites
+## Prerequisites
 In this chapter we will create an Elixir application and run it locally.
 Since the application will be performing hardware-accelerated video transcoding with the use of Vulkan Video Extensions,
 you need a Linux machine with a Vulkan-capable GPU (NVIDIA or AMD) with Mesa drivers and Vulkan Video extension support.
@@ -45,7 +46,7 @@ as it presents basic Membrane concepts and shows how to write your own simple pi
 we won’t discuss these things in detail in this tutorial.
 For development purposes, make sure you have [FFmpeg](https://ffmpeg.org/) installed.
 
-# System overview
+## System overview
 
 The system consists of three main stages: **ingestion**, **transcoding**, and **distribution**.
 
@@ -85,7 +86,7 @@ graph LR
     Viewer -- "HLS\n(HTTP)" --> HTTP
 ```
 
-# Creating a new project
+## Creating a new project
 Let’s start by creating a new `mix` project with the name of your choice:
 ```
 mix new ex_broadcaster
@@ -118,7 +119,7 @@ We need the following packages:
 - [`membrane_h26x_plugin`](https://hexdocs.pm/membrane_h26x_plugin) and [`membrane_aac_plugin`](https://hexdocs.pm/membrane_aac_plugin) —
   to change the stream structure of video and audio streams (so that they "fit" in CMAF container)
 
-## Configuration
+### Configuration
 In `config/config.exs` let’s add the following entries which we will use later:
 ```elixir
 # config/config.exs
@@ -143,7 +144,7 @@ The provided values are reasonable for a local development, but we will need to 
 when we deploy the application.
 
 
-# Application startup
+## Application startup
 In `lib/ex_broadcaster/application.ex` add the `start/2` function:
 ```elixir
 # lib/ex_broadcaster/application.ex
@@ -185,7 +186,7 @@ On application startup we spawn:
 
 We use `:one_for_one` supervision strategy to ensure that each child is restarted independently from the other.
 
-## RTMP Server
+### RTMP Server
 RTMP Server requires providing `handle_new_client` callback.
 It’s called each time a new client connects to the server. Let’s implement it:
 
@@ -255,7 +256,7 @@ but since we want to use the Membrane.RTMP.Server
 with `Membrane.RTMP.Source`, we return `Membrane.RTMP.Source.ClientHandlerImpl` which is a preexisting implementation
 meant to be used with this common case.
 
-# Building the pipeline
+## Building the pipeline
 Now let’s add a new pipeline module, e.g. `ExBroadcaster.Pipeline` and a simple `start_link/1` implementation
 that will start the Pipeline module with passed options.
 See the [`Membrane.Pipeline` docs](https://hexdocs.pm/membrane_core/Membrane.Pipeline.html)
@@ -280,7 +281,7 @@ end
 ```
 We can start implementing Membrane pipeline callbacks.
 
-## `handle_init` callback
+### `handle_init` callback
 
 Let’s start with `handle_init`:
 ```elixir
@@ -311,7 +312,7 @@ This callback reads the desired options:
 Then we return the pipeline structure within the `spec` action.
 Let’s discuss the pipeline structure (and `build_spec` private function implementation).
 
-## Pipeline structure:
+### Pipeline structure:
 
 Each `ExBroadcaster.Pipeline` is a static Membrane pipeline built entirely in `handle_init/2`.
 The topology has two branches coming out of the RTMP source — one for video, one for audio —
@@ -380,7 +381,7 @@ A few things worth noting:
   passing encoding parameters (resolution, bitrate, scaling algorithm) as pad options to the transcoder.
 
 
-### `build_spec/3`
+#### `build_spec/3`
 ```elixir
 # lib/ex_broadcaster/pipeline.ex
   defp build_spec(client_ref, storage, segment_duration) do
@@ -436,7 +437,7 @@ built by `build_variant_spec/2` (covered in the next section).
 Each variant connects a transcoder output pad and a tee output pad into a shared CMAF muxer,
 which feeds its track into the HLS sink.
 
-### `build_variant_spec/2`
+#### `build_variant_spec/2`
 
 `build_variant_spec/2` is called once per entry in `@variants` and returns two linked element chains —
 one for video, one for audio — that together form a single resolution variant:
@@ -500,7 +501,7 @@ and feeds directly into the same `{:cmaf_muxer, id}` that the video chain alread
 This means a single CMAF muxer produces one interleaved audio+video track per variant,
 which is exactly what HLS adaptive streaming expects.
 
-## Self-termination of the pipeline:
+### Self-termination of the pipeline:
 
 We need to add `handle_element_end_of_stream` callback to ensure proper termination of the pipeline
 when the stream ends:
@@ -518,7 +519,7 @@ when the stream ends:
 ```
 We only need to `terminate: normal` when the end-of-stream signal arrives at `:hls_sink` sink element.
 
-# Running the application
+## Running the application
 Now our pipeline is ready for running.
 In development environment we can do:
 
