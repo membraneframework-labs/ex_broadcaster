@@ -116,7 +116,7 @@ We need the following packages:
 - [`membrane_http_adaptive_stream_plugin`](https://hexdocs.pm/membrane_http_adaptive_stream_plugin) — for HLS playlist generation
 - [`membrane_mp4_plugin`](https://hexdocs.pm/membrane_mp4_plugin) — for wrapping stream in CMAF container
 - [`membrane_h26x_plugin`](https://hexdocs.pm/membrane_h26x_plugin) and [`membrane_aac_plugin`](https://hexdocs.pm/membrane_aac_plugin) —
-  to change the stream structure of video and audio streams (so that they “fit” in CMAF container)
+  to change the stream structure of video and audio streams (so that they "fit" in CMAF container)
 
 ## Configuration
 In `config/config.exs` let’s add the following entries which we will use later:
@@ -192,7 +192,7 @@ It’s called each time a new client connects to the server. Let’s implement i
 ```elixir
 # lib/ex_broadcaster/application.ex
   def handle_new_client(client_ref, app, stream_key) do
-    Logger.info(“[App] New RTMP client: app=#{app}, stream_key=#{stream_key}”)
+    Logger.info("[App] New RTMP client: app=#{app}, stream_key=#{stream_key}")
 
     segment_duration_sec = Application.get_env(:ex_broadcaster, :segment_duration_sec, 4)
 
@@ -205,17 +205,17 @@ It’s called each time a new client connects to the server. Let’s implement i
     %{active: active} = DynamicSupervisor.count_children(__MODULE__.PipelineSupervisor)
 
     if active >= @max_concurrent_pipelines do
-      Logger.warning(“[App] Rejecting client (stream_key=#{stream_key}): reached limit of #{@max_concurrent_pipelines} concurrent pipelines”)
+      Logger.warning("[App] Rejecting client (stream_key=#{stream_key}): reached limit of #{@max_concurrent_pipelines} concurrent pipelines")
     else
       case DynamicSupervisor.start_child(
              __MODULE__.PipelineSupervisor,
              Supervisor.child_spec({ExBroadcaster.Pipeline, pipeline_opts}, restart: :temporary)
            ) do
         {:ok, _supervisor, pid} ->
-          Logger.info(“[App] Pipeline started (pid=#{inspect(pid)}) for stream_key=#{stream_key}”)
+          Logger.info("[App] Pipeline started (pid=#{inspect(pid)}) for stream_key=#{stream_key}")
 
         {:error, reason} ->
-          Logger.error(“[App] Failed to start pipeline: #{inspect(reason)}”)
+          Logger.error("[App] Failed to start pipeline: #{inspect(reason)}")
       end
     end
 
@@ -223,7 +223,7 @@ It’s called each time a new client connects to the server. Let’s implement i
   end
 
   defp build_storage(stream_key) do
-    base_dir = Application.get_env(:ex_broadcaster, :hls_output_dir, “output/hls”)
+    base_dir = Application.get_env(:ex_broadcaster, :hls_output_dir, "output/hls")
     output_dir = Path.join(base_dir, stream_key)
     File.mkdir_p!(output_dir)
     %Membrane.HTTPAdaptiveStream.Storages.FileStorage{directory: output_dir}
