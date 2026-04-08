@@ -1,7 +1,7 @@
 # Bringing Membrane to production
 
 This article is the first in a series on building a fully functional multimedia processing solution with [Membrane Framework](https://membrane.stream).
-The complete source code for this chapter is available at [membraneframework-labs/tutorial_vk_video](https://github.com/membraneframework-labs/tutorial_vk_video).
+The complete source code for this chapter is available at [membraneframework-labs/ex_broadcaster](https://github.com/membraneframework-labs/ex_broadcaster).
 
 ## Introduction
 We will build a live video broadcasting system: one that ingests an RTMP stream,
