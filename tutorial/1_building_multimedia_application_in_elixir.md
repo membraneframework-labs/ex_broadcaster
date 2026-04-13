@@ -14,7 +14,7 @@ without building the infrastructure themselves.
 
 Building a reliable broadcasting system is non-trivial.
 We will show, however, that a solid foundation can be written in Elixir with Membrane Framework —
-one that runs in production, utilizes GPU resources efficiently, and scales with demand.
+a production-ready one, that utilises GPU resources efficiently and scales with demand.
 
 Here is the plan:
 
