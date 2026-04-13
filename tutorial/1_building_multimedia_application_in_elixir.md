@@ -115,7 +115,7 @@ defp deps do
 We need the following packages:
 
 - [`membrane_core`](https://hexdocs.pm/membrane_core) — to specify the pipeline structure
-- [`membrane_vk_video_plugin`](https://hexdocs.pm/membrane_vk_video_plugin) — providing hardware transcoding capabilities
+- [`membrane_vk_video_plugin`](https://hexdocs.pm/membrane_vk_video_plugin) — for hardware transcoding capabilities
 - [`membrane_rtmp_plugin`](https://hexdocs.pm/membrane_rtmp_plugin) — for RTMP ingestion source
 - [`membrane_http_adaptive_stream_plugin`](https://hexdocs.pm/membrane_http_adaptive_stream_plugin) — for HLS playlist generation
 - [`membrane_mp4_plugin`](https://hexdocs.pm/membrane_mp4_plugin) — for wrapping stream in CMAF container
