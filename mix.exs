@@ -29,9 +29,8 @@ defmodule ExBroadcaster.MixProject do
       {:membrane_aac_plugin, "~> 0.19.0"},
       {:bandit, "~> 1.0"},
       {:plug, "~> 1.14"},
-      {:ex_aws, "~> 2.6"},
       {:ex_aws_s3, "~> 2.5"},
-      {:hackney, "~> 1.9"}
+      {:hackney, ">= 0.0.0"}
     ]
   end
 end

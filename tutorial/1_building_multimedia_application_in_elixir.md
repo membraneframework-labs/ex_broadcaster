@@ -84,8 +84,8 @@ graph LR
     Streamer -- "RTMP\n(over TCP)" --> Ingest
     Ingest -- "audio + video" --> Transcode
     Transcode -- "1080p / 720p / 480p\nfMP4 segments + .m3u8 playlists" --> Segments
-    HTTP -- "serve" --> Segments
-    Viewer -- "HLS\n(HTTP)" --> HTTP
+    Segments -- "serve" --> HTTP
+    HTTP -- "HLS\n(HTTP)" --> Viewer
 ```
 
 ## Creating a new project
@@ -554,20 +554,19 @@ You should be able to see that the resolution changes throughout based on your n
 
 ## Adding S3 storage
 
-The file-based storage works well for local development, but for production we want to upload segments directly to S3
+The file-based storage works well for local development, but for production we want to upload segments directly to AWS S3
 so they can be served by a CDN.
 Because the pipeline accepts a plain storage struct and knows nothing about where data lands,
 adding a second backend requires no changes to the pipeline at all.
 
 ### Dependencies
 
-Add `ex_aws`, `ex_aws_s3`, and `hackney` (the HTTP client ExAws uses) to `mix.exs`:
+Add `ex_aws_s3`, and `hackney` (the HTTP client ExAws uses) to `mix.exs`:
 
 ```elixir
 # mix.exs
-{:ex_aws, "~> 2.6"},
 {:ex_aws_s3, "~> 2.5"},
-{:hackney, "~> 1.9"}
+{:hackney, ">= 0.0.0"}
 ```
 
 ### Implementing the storage
@@ -698,8 +697,8 @@ The release can then be started on any compatible machine without Elixir or Mix 
 _build/prod/rel/ex_broadcaster/bin/ex_broadcaster start
 ```
 
-Before doing so, remember to set the `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`,
-`S3_BUCKET`, and `S3_PREFIX` environment variables.
+Before doing so, create an S3 bucket in your preferred region and make sure you have AWS credentials with write access to it.
+Then set the `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `S3_BUCKET`, and `S3_PREFIX` environment variables before starting the application.
 
 When you start streaming, fMP4 segments and the live HLS playlist will appear in your bucket under
 `$S3_PREFIX/<year>/<month>/<day>/<hour>/<stream_key>/index.m3u8`.
