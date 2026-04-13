@@ -1,4 +1,4 @@
-# Bringing Membrane to production
+# Live video broadcasting system - from scratch to production with Membrane
 
 This article is the first in a series on building a fully functional multimedia processing solution with [Membrane Framework](https://github.com/membraneframework).
 The complete source code for this chapter is available at [membraneframework-labs/ex_broadcaster](https://github.com/membraneframework-labs/ex_broadcaster).
