@@ -1,7 +1,8 @@
 # Bringing Membrane to production
 
-This article is the first in a series on building a fully functional multimedia processing solution with [Membrane Framework](https://membrane.stream).
+This article is the first in a series on building a fully functional multimedia processing solution with [Membrane Framework](https://github.com/membraneframework).
 The complete source code for this chapter is available at [membraneframework-labs/ex_broadcaster](https://github.com/membraneframework-labs/ex_broadcaster).
+Since the application performs hardware-accelerated video transcoding using Vulkan Video Extensions, running it locally requires a Linux machine with a Vulkan-capable GPU (NVIDIA or AMD) with Mesa drivers and Vulkan Video extension support.
 
 ## Introduction
 We will build a live video broadcasting system: one that ingests an RTMP stream,
