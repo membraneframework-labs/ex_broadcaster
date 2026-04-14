@@ -3,7 +3,7 @@ import Config
 # Content-Type headers mapping
 config :mime, :types, %{
   "application/vnd.apple.mpegurl" => ["m3u8"],
-  "video/mp4" => ["m4s", "mp4"],
+  "video/mp4" => ["m4s", "mp4"]
 }
 
 config :ex_broadcaster,
