@@ -30,9 +30,9 @@ defmodule ExBroadcaster.Pipeline do
 
   require Membrane.Logger, as: Logger
 
-  alias Membrane.VKVideo
-  alias Membrane.MP4.Muxer.CMAF, as: CMAFMuxer
   alias Membrane.HTTPAdaptiveStream
+  alias Membrane.MP4.Muxer.CMAF, as: CMAFMuxer
+  alias Membrane.VKVideo
 
   @variants [
     %{
@@ -61,6 +61,11 @@ defmodule ExBroadcaster.Pipeline do
     }
   ]
 
+  @spec start_link([
+          {:client_ref, pid()},
+          {:storage, HTTPAdaptiveStream.Storage.t()},
+          {:segment_duration, Membrane.Time.t()}
+        ]) :: Membrane.Pipeline.on_start()
   def start_link(opts) do
     Membrane.Pipeline.start_link(__MODULE__, opts)
   end

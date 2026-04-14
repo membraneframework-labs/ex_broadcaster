@@ -29,7 +29,7 @@ defmodule ExBroadcaster.Storages.S3Storage do
     key = prefix <> "/" <> name
 
     case bucket |> ExAws.S3.put_object(key, content) |> ExAws.request() do
-      {:ok, _} ->
+      {:ok, _response} ->
         {:ok, state}
 
       {:error, reason} ->
@@ -43,7 +43,7 @@ defmodule ExBroadcaster.Storages.S3Storage do
     key = prefix <> "/" <> name
 
     case bucket |> ExAws.S3.delete_object(key) |> ExAws.request() do
-      {:ok, _} ->
+      {:ok, _response} ->
         {:ok, state}
 
       {:error, reason} ->

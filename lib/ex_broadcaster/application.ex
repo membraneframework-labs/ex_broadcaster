@@ -22,10 +22,14 @@ defmodule ExBroadcaster.Application do
 
   require Logger
 
-  alias Membrane.HTTPAdaptiveStream.Storages.FileStorage
   alias ExBroadcaster.Storages.S3Storage
+  alias Membrane.HTTPAdaptiveStream.Storages.FileStorage
 
-  @max_concurrent_pipelines Application.compile_env(:ex_broadcaster, :max_concurrent_pipelines, 10)
+  @max_concurrent_pipelines Application.compile_env(
+                              :ex_broadcaster,
+                              :max_concurrent_pipelines,
+                              10
+                            )
 
   @impl true
   def start(_type, _args) do
@@ -51,6 +55,7 @@ defmodule ExBroadcaster.Application do
   Each pipeline uploads HLS output to its own S3 prefix named after
   the stream key, allowing multiple simultaneous streams.
   """
+  @spec handle_new_client(pid(), String.t(), String.t()) :: client_behaviour_spec()
   def handle_new_client(client_ref, app, stream_key) do
     Logger.info("[App] New RTMP client: app=#{app}, stream_key=#{stream_key}")
 
@@ -65,7 +70,9 @@ defmodule ExBroadcaster.Application do
     %{active: active} = DynamicSupervisor.count_children(__MODULE__.PipelineSupervisor)
 
     if active >= @max_concurrent_pipelines do
-      Logger.warning("[App] Rejecting client (stream_key=#{stream_key}): reached limit of #{@max_concurrent_pipelines} concurrent pipelines")
+      Logger.warning(
+        "[App] Rejecting client (stream_key=#{stream_key}): reached limit of #{@max_concurrent_pipelines} concurrent pipelines"
+      )
     else
       case DynamicSupervisor.start_child(
              __MODULE__.PipelineSupervisor,

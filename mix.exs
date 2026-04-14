@@ -30,7 +30,8 @@ defmodule ExBroadcaster.MixProject do
       {:bandit, "~> 1.0"},
       {:plug, "~> 1.14"},
       {:ex_aws_s3, "~> 2.5"},
-      {:hackney, ">= 0.0.0"}
+      {:hackney, ">= 0.0.0"},
+      {:credo, ">= 0.0.0", only: :dev, runtime: false}
     ]
   end
 end
