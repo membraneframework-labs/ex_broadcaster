@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ex-broadcaster-rtmp
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  selector:
+    app: ex-broadcaster
+  ports:
+    - name: rtmp
+      port: 1935
+      targetPort: rtmp
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ex-broadcaster-http
+spec:
+  type: ClusterIP
+  selector:
+    app: ex-broadcaster
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP

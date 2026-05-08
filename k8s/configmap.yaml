@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ex-broadcaster-config
+data:
+  AWS_REGION: "eu-north-1"
+  # Set to the value of `terraform output hls_bucket_name`
+  # (format: ex-broadcaster-hls-<aws-account-id>)
+  S3_BUCKET: "ex-broadcaster-hls-REPLACE_WITH_ACCOUNT_ID"
+  S3_PREFIX: "hls"

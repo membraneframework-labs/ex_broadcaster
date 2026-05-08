@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ex-broadcaster
+  labels:
+    app: ex-broadcaster
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: ex-broadcaster
+  template:
+    metadata:
+      labels:
+        app: ex-broadcaster
+    spec:
+      nodeSelector:
+        node.kubernetes.io/accelerator: nvidia-l4
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+      containers:
+        - name: ex-broadcaster
+          image: REPLACE_ME_REGISTRY/ex-broadcaster:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: rtmp
+              containerPort: 1935
+              protocol: TCP
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: "video,compute,utility,graphics"
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: "all"
+          envFrom:
+            - configMapRef:
+                name: ex-broadcaster-config
+            - secretRef:
+                name: ex-broadcaster-aws
+          resources:
+            limits:
+              nvidia.com/gpu: 1
+              memory: "4Gi"
+              cpu: "2"
+            requests:
+              nvidia.com/gpu: 1
+              memory: "2Gi"
+              cpu: "1"
+          readinessProbe:
+            tcpSocket:
+              port: rtmp
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: rtmp
+            initialDelaySeconds: 30
+            periodSeconds: 15
