@@ -1,38 +1,41 @@
 defmodule ExBroadcaster.Pipeline do
   @moduledoc """
   Membrane pipeline that receives a single RTMP stream, transcodes it to
-  multiple H.264 variants using the GPU (via `Membrane.VKVideo.Transcoder`),
-  and uploads an adaptive HLS manifest + fMP4 segments to Amazon S3.
+  multiple H.264 variants using a single `Membrane.Transcoder` with multiple outputs
+  (v0.4.0+ feature) and Vulkan Video native acceleration via `membrane_vk_video_plugin`,
+  and uploads an adaptive HLS manifest + fMP4 segments.
 
   Topology
   --------
 
     RTMP.SourceBin
       │
-      ├─ :video ──► H264.Parser ──► VKVideo.Transcoder ─┬─ :output(1080p) ─► CMAF.Muxer(1080p) ─► HLS.Sink
-      │                                                  ├─ :output(720p)  ─► CMAF.Muxer(720p)  ─►   │
-      │                                                  └─ :output(480p)  ─► CMAF.Muxer(480p)  ─►   │
-      │                                                                                               │
-      └─ :audio ──► AAC.Parser ──► Tee ─── :output(1080p) ──────────────────► CMAF.Muxer(1080p) ─►   │
-                                       ├─ :output(720p)  ──────────────────► CMAF.Muxer(720p)  ─►   │
-                                       └─ :output(480p)  ──────────────────► CMAF.Muxer(480p)  ─►   │
+      ├─ :video ──► H264.Parser ──► Transcoder ──┬─ :output(:p1080) ──► CMAF.Muxer(1080p) ─►
+      │                                     ├─ :output(:p720)  ──► CMAF.Muxer(720p)  ─► HLS.Sink
+      │                                     └─ :output(:p480)  ──► CMAF.Muxer(480p)  ─►
+      │
+      └─ :audio ──► AAC.Parser ──► Tee ──────────┬─ :output(:p1080) ─► CMAF.Muxer(1080p) ─►
+                                                  ├─ :output(:p720)  ─► CMAF.Muxer(720p)  ─►
+                                                  └─ :output(:p480)  ─► CMAF.Muxer(480p)  ─►
 
   Each CMAF muxer produces a single muxed audio+video CMAF track delivered
   to the shared HLS sink, which writes segments and a master playlist.
 
   GPU requirements
   ----------------
-  `Membrane.VKVideo.Transcoder` requires Linux with a Vulkan-capable GPU
-  (NVIDIA or AMD with Mesa) and the Vulkan Video extension.
+  When `native_acceleration: :if_available` is set and `membrane_vk_video_plugin` is present,
+  `Membrane.Transcoder` uses Vulkan Video hardware acceleration for encoding/decoding.
+  This requires Linux with a Vulkan-capable GPU (NVIDIA or AMD with Mesa) and the Vulkan Video extension.
   """
 
   use Membrane.Pipeline
 
   require Membrane.Logger, as: Logger
+  require Membrane.Pad
 
   alias Membrane.HTTPAdaptiveStream
   alias Membrane.MP4.Muxer.CMAF, as: CMAFMuxer
-  alias Membrane.VKVideo
+  alias Membrane.Pad
 
   @variants [
     %{
@@ -40,7 +43,6 @@ defmodule ExBroadcaster.Pipeline do
       track_name: "1080p",
       width: 1920,
       height: 1080,
-      bitrate: 4_000_000,
       framerate: {30, 1}
     },
     %{
@@ -48,7 +50,6 @@ defmodule ExBroadcaster.Pipeline do
       track_name: "720p",
       width: 1280,
       height: 720,
-      bitrate: 2_500_000,
       framerate: {30, 1}
     },
     %{
@@ -56,7 +57,6 @@ defmodule ExBroadcaster.Pipeline do
       track_name: "480p",
       width: 854,
       height: 480,
-      bitrate: 1_000_000,
       framerate: {30, 1}
     }
   ]
@@ -102,7 +102,10 @@ defmodule ExBroadcaster.Pipeline do
         output_alignment: :au,
         output_stream_structure: :annexb
       })
-      |> child(:transcoder, Membrane.VKVideo.Transcoder)
+      |> child(:transcoder, %Membrane.Transcoder{
+        transcoding_policy: :always,
+        native_acceleration: :if_available
+      })
 
     audio_branch =
       get_child(:rtmp_source)
@@ -126,27 +129,23 @@ defmodule ExBroadcaster.Pipeline do
   end
 
   defp build_variant_spec(variant, segment_duration) do
-    %{id: id, track_name: name, width: w, height: h, bitrate: br, framerate: fps} = variant
+    %{id: id, track_name: name, width: w, height: h, framerate: fps} = variant
 
     video_to_muxer =
       get_child(:transcoder)
       |> via_out(Pad.ref(:output, id),
         options: [
-          width: w,
-          height: h,
-          tune: :low_latency,
-          rate_control:
-            {:constant_bitrate,
-             %VKVideo.Encoder.ConstantBitrate{
-               bitrate: br
-             }},
-          scaling_algorithm: :bilinear
+          output_stream_format: %Membrane.H264{
+            width: w,
+            height: h,
+            framerate: fps,
+            alignment: :au,
+            stream_structure: :avc1
+          },
+          transcoding_policy: :always,
+          native_acceleration: :if_available
         ]
       )
-      |> child({:h264_parser_out, id}, %Membrane.H264.Parser{
-        output_alignment: :au,
-        output_stream_structure: :avc1
-      })
       |> via_in(Pad.ref(:input, {:video, id}))
       |> child({:cmaf_muxer, id}, %CMAFMuxer{segment_min_duration: segment_duration})
       |> via_in(Pad.ref(:input, id),
