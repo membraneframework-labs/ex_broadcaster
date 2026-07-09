@@ -29,5 +29,5 @@ resource "aws_ecr_lifecycle_policy" "ex_broadcaster" {
 
 output "ecr_repository_url" {
   value       = aws_ecr_repository.ex_broadcaster.repository_url
-  description = "Use this as the image: prefix in k8s/deployment.yaml"
+  description = "ECR repository URL; push images here, referenced by the ASG launch template user-data (var.app_image_tag)"
 }

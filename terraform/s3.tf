@@ -46,7 +46,7 @@ resource "aws_s3_bucket_cors_configuration" "hls" {
 
 output "hls_bucket_name" {
   value       = aws_s3_bucket.hls.bucket
-  description = "Bucket name to put in k8s/configmap.yaml as S3_BUCKET"
+  description = "S3_BUCKET value for the ex_broadcaster launch template user-data"
 }
 
 output "hls_bucket_url" {
