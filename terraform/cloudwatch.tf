@@ -11,6 +11,7 @@ resource "aws_cloudwatch_log_group" "system" {
 locals {
   cloudwatch_agent_config = templatefile("${path.module}/amazon-cloudwatch-agent.json.tpl", {
     system_log_group = aws_cloudwatch_log_group.system.name
+    gpu_enabled      = var.gpu_enabled
   })
 }
 
@@ -73,8 +74,10 @@ resource "aws_cloudwatch_metric_alarm" "no_healthy_targets" {
 # Sustained near-100% GPU utilization is the real capacity signal for this
 # workload (the ASG scales on CPU, which the Vulkan Video transcode path
 # barely touches) — this is a heads-up to raise cpu_target_value/instance
-# count or move to GPU-based scaling, not an outage alarm.
+# count or move to GPU-based scaling, not an outage alarm. Skipped entirely
+# when gpu_enabled=false since the metric would never get published.
 resource "aws_cloudwatch_metric_alarm" "gpu_utilization_high" {
+  count               = var.gpu_enabled ? 1 : 0
   alarm_name          = "ex-broadcaster-gpu-utilization-high"
   namespace           = "ExBroadcaster"
   metric_name         = "utilization_gpu"
@@ -92,74 +95,62 @@ resource "aws_cloudwatch_metric_alarm" "gpu_utilization_high" {
   alarm_actions = [aws_sns_topic.alarms.arn]
 }
 
+locals {
+  # GPU/encoder widgets only make sense when there's a GPU publishing them.
+  gpu_dashboard_widgets = var.gpu_enabled ? [
+    {
+      title = "GPU utilization"
+      metrics = [
+        ["ExBroadcaster", "utilization_gpu", "AutoScalingGroupName", aws_autoscaling_group.ex_broadcaster.name, { stat = "Average" }]
+      ]
+    },
+    {
+      title = "NVENC encoder sessions / fps"
+      metrics = [
+        ["ExBroadcaster", "encoder_stats_session_count", "AutoScalingGroupName", aws_autoscaling_group.ex_broadcaster.name, { stat = "Average" }],
+        ["ExBroadcaster", "encoder_stats_average_fps", "AutoScalingGroupName", aws_autoscaling_group.ex_broadcaster.name, { stat = "Average", yAxis = "right" }]
+      ]
+    }
+  ] : []
+
+  base_dashboard_widgets = [
+    {
+      title = "ASG CPU utilization"
+      metrics = [
+        ["AWS/EC2", "CPUUtilization", "AutoScalingGroupName", aws_autoscaling_group.ex_broadcaster.name, { stat = "Average" }]
+      ]
+    },
+    {
+      title = "NLB healthy / unhealthy targets"
+      metrics = [
+        ["AWS/NetworkELB", "HealthyHostCount", "TargetGroup", aws_lb_target_group.rtmp.arn_suffix, "LoadBalancer", aws_lb.rtmp.arn_suffix, { stat = "Minimum" }],
+        ["AWS/NetworkELB", "UnHealthyHostCount", "TargetGroup", aws_lb_target_group.rtmp.arn_suffix, "LoadBalancer", aws_lb.rtmp.arn_suffix, { stat = "Maximum" }]
+      ]
+    }
+  ]
+
+  dashboard_widgets = [
+    for idx, w in concat(local.gpu_dashboard_widgets, local.base_dashboard_widgets) : {
+      type   = "metric"
+      x      = (idx % 2) * 12
+      y      = floor(idx / 2) * 6
+      width  = 12
+      height = 6
+      properties = {
+        title   = w.title
+        region  = var.aws_region
+        stacked = false
+        metrics = w.metrics
+      }
+    }
+  ]
+}
+
 resource "aws_cloudwatch_dashboard" "ex_broadcaster" {
   dashboard_name = "ex-broadcaster"
 
   dashboard_body = jsonencode({
-    widgets = [
-      {
-        type   = "metric"
-        x      = 0
-        y      = 0
-        width  = 12
-        height = 6
-        properties = {
-          title   = "GPU utilization"
-          region  = var.aws_region
-          stacked = false
-          metrics = [
-            ["ExBroadcaster", "utilization_gpu", "AutoScalingGroupName", aws_autoscaling_group.ex_broadcaster.name, { stat = "Average" }]
-          ]
-        }
-      },
-      {
-        type   = "metric"
-        x      = 12
-        y      = 0
-        width  = 12
-        height = 6
-        properties = {
-          title   = "NVENC encoder sessions / fps"
-          region  = var.aws_region
-          stacked = false
-          metrics = [
-            ["ExBroadcaster", "encoder_stats_session_count", "AutoScalingGroupName", aws_autoscaling_group.ex_broadcaster.name, { stat = "Average" }],
-            ["ExBroadcaster", "encoder_stats_average_fps", "AutoScalingGroupName", aws_autoscaling_group.ex_broadcaster.name, { stat = "Average", yAxis = "right" }]
-          ]
-        }
-      },
-      {
-        type   = "metric"
-        x      = 0
-        y      = 6
-        width  = 12
-        height = 6
-        properties = {
-          title   = "ASG CPU utilization"
-          region  = var.aws_region
-          stacked = false
-          metrics = [
-            ["AWS/EC2", "CPUUtilization", "AutoScalingGroupName", aws_autoscaling_group.ex_broadcaster.name, { stat = "Average" }]
-          ]
-        }
-      },
-      {
-        type   = "metric"
-        x      = 12
-        y      = 6
-        width  = 12
-        height = 6
-        properties = {
-          title   = "NLB healthy / unhealthy targets"
-          region  = var.aws_region
-          stacked = false
-          metrics = [
-            ["AWS/NetworkELB", "HealthyHostCount", "TargetGroup", aws_lb_target_group.rtmp.arn_suffix, "LoadBalancer", aws_lb.rtmp.arn_suffix, { stat = "Minimum" }],
-            ["AWS/NetworkELB", "UnHealthyHostCount", "TargetGroup", aws_lb_target_group.rtmp.arn_suffix, "LoadBalancer", aws_lb.rtmp.arn_suffix, { stat = "Maximum" }]
-          ]
-        }
-      }
-    ]
+    widgets = local.dashboard_widgets
   })
 }
 

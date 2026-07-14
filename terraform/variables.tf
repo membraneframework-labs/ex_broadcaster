@@ -4,10 +4,20 @@ variable "aws_region" {
   default     = "eu-north-1"
 }
 
+variable "gpu_enabled" {
+  description = "Whether the ASG instances have an NVIDIA GPU and should be bootstrapped for Vulkan Video hardware acceleration"
+  type        = bool
+  default     = true
+}
+
 variable "instance_type" {
-  description = "Instance type for the ASG. Must be a GPU instance — the pipeline uses Membrane.Transcoder with Vulkan Video hardware acceleration. g6.xlarge (NVIDIA L4) matches the GPU node group previously used for the EKS setup"
+  # Leave unset to pick a sensible default from gpu_enabled: g6.xlarge
+  # (NVIDIA L4, matching the GPU node group previously used for the EKS
+  # setup) when true, c6i.large (compute-optimized, no GPU) when false. Set
+  # explicitly to override either default.
+  description = "Instance type for the ASG. If null, derived from gpu_enabled (see locals.instance_type in asg.tf)"
   type        = string
-  default     = "g6.xlarge"
+  default     = null
 }
 
 variable "asg_min_size" {

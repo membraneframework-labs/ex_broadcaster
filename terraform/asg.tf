@@ -2,10 +2,14 @@ data "aws_ssm_parameter" "ubuntu_ami" {
   name = "/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id"
 }
 
+locals {
+  instance_type = coalesce(var.instance_type, var.gpu_enabled ? "g6.xlarge" : "c6i.large")
+}
+
 resource "aws_launch_template" "ex_broadcaster" {
   name_prefix   = "ex-broadcaster-"
   image_id      = data.aws_ssm_parameter.ubuntu_ami.value
-  instance_type = var.instance_type
+  instance_type = local.instance_type
   key_name      = aws_key_pair.ex_broadcaster.key_name
 
   iam_instance_profile {
@@ -36,6 +40,7 @@ resource "aws_launch_template" "ex_broadcaster" {
     s3_prefix               = var.s3_prefix
     app_log_group           = aws_cloudwatch_log_group.app.name
     cloudwatch_agent_config = local.cloudwatch_agent_config
+    gpu_enabled             = var.gpu_enabled
   }))
 
   tag_specifications {

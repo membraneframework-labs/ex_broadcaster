@@ -34,7 +34,9 @@
       "disk": {
         "measurement": ["used_percent"],
         "resources": ["/"]
-      },
+      }
+      %{ if gpu_enabled ~}
+      ,
       "nvidia_gpu": {
         "measurement": [
           "utilization_gpu",
@@ -48,6 +50,7 @@
           "encoder_stats_average_latency"
         ]
       }
+      %{ endif ~}
     }
   }
 }

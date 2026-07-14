@@ -23,24 +23,30 @@ fi
 systemctl enable docker
 systemctl start docker
 
-if ! command -v nvidia-smi >/dev/null 2>&1; then
-  apt-get update -y
-  apt-get install -y linux-headers-$(uname -r)
-  curl -fsSL "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb" -o /tmp/cuda-keyring.deb
-  dpkg -i /tmp/cuda-keyring.deb
-  apt-get update -y
-  apt-get install -y nvidia-driver-535-server
-fi
+GPU_DOCKER_ARGS=()
 
-if ! command -v nvidia-ctk >/dev/null 2>&1; then
-  curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-  curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
-    | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
-    > /etc/apt/sources.list.d/nvidia-container-toolkit.list
-  apt-get update -y
-  apt-get install -y nvidia-container-toolkit
-  nvidia-ctk runtime configure --runtime=docker
-  systemctl restart docker
+if [ "${gpu_enabled}" = "true" ]; then
+  if ! command -v nvidia-smi >/dev/null 2>&1; then
+    apt-get update -y
+    apt-get install -y linux-headers-$(uname -r)
+    curl -fsSL "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb" -o /tmp/cuda-keyring.deb
+    dpkg -i /tmp/cuda-keyring.deb
+    apt-get update -y
+    apt-get install -y nvidia-driver-535-server
+  fi
+
+  if ! command -v nvidia-ctk >/dev/null 2>&1; then
+    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+    curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+      | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+      > /etc/apt/sources.list.d/nvidia-container-toolkit.list
+    apt-get update -y
+    apt-get install -y nvidia-container-toolkit
+    nvidia-ctk runtime configure --runtime=docker
+    systemctl restart docker
+  fi
+
+  GPU_DOCKER_ARGS=(--gpus all)
 fi
 
 if ! command -v amazon-cloudwatch-agent-ctl >/dev/null 2>&1; then
@@ -65,18 +71,29 @@ if ! command -v aws >/dev/null 2>&1; then
   (cd /tmp && unzip -q awscliv2.zip && ./aws/install)
 fi
 
-aws ecr get-login-password --region "$AWS_REGION" \
-  | docker login --username AWS --password-stdin "$ECR_REPOSITORY_URL"
+if ! aws ecr get-login-password --region "$AWS_REGION" \
+  | docker login --username AWS --password-stdin "$ECR_REPOSITORY_URL"; then
+  echo "FATAL: docker login to ECR repository $ECR_REPOSITORY_URL (region $AWS_REGION) failed." \
+    "Check that this instance's IAM role still has AmazonEC2ContainerRegistryReadOnly and that" \
+    "NAT/network egress to ECR is up (this instance runs in a private subnet)." >&2
+  exit 1
+fi
 
 IMAGE="$ECR_REPOSITORY_URL:$IMAGE_TAG"
-docker pull "$IMAGE"
+if ! docker pull "$IMAGE"; then
+  echo "FATAL: docker pull failed for image $IMAGE." \
+    "Check that tag '$IMAGE_TAG' was actually pushed to $ECR_REPOSITORY_URL — a missing/typo'd" \
+    "app_image_tag is the most common cause; this is otherwise the same login/network failure" \
+    "as above surfacing at pull time instead." >&2
+  exit 1
+fi
 
 docker rm -f ex-broadcaster >/dev/null 2>&1 || true
 
 docker run -d \
   --name ex-broadcaster \
   --restart unless-stopped \
-  --gpus all \
+  "$${GPU_DOCKER_ARGS[@]}" \
   --log-driver=awslogs \
   --log-opt awslogs-region="$AWS_REGION" \
   --log-opt awslogs-group="$APP_LOG_GROUP" \
