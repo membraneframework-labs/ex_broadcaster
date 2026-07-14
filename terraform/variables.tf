@@ -5,9 +5,9 @@ variable "aws_region" {
 }
 
 variable "instance_type" {
-  description = "Instance type for the ASG (compute-optimized; no GPU needed, transcoding runs in software)"
+  description = "Instance type for the ASG. Must be a GPU instance — the pipeline uses Membrane.Transcoder with Vulkan Video hardware acceleration. g6.xlarge (NVIDIA L4) matches the GPU node group previously used for the EKS setup"
   type        = string
-  default     = "c6i.large"
+  default     = "g6.xlarge"
 }
 
 variable "asg_min_size" {
@@ -32,8 +32,9 @@ variable "cpu_target_value" {
 }
 
 variable "root_volume_size_gb" {
-  type    = number
-  default = 30
+  description = "Root EBS volume size in GB"
+  type        = number
+  default     = 20
 }
 
 variable "app_image_tag" {
@@ -45,4 +46,16 @@ variable "app_image_tag" {
 variable "s3_prefix" {
   type    = string
   default = "hls"
+}
+
+variable "log_retention_days" {
+  description = "Retention for the CloudWatch Logs groups (app + system logs)"
+  type        = number
+  default     = 14
+}
+
+variable "alarm_email" {
+  description = "Email address to subscribe to the ex-broadcaster-alarms SNS topic. Leave empty to skip creating a subscription (alarms still fire and show up in the CloudWatch console either way)"
+  type        = string
+  default     = ""
 }

@@ -1,8 +1,4 @@
 data "aws_ssm_parameter" "ubuntu_ami" {
-  # Canonical only publishes an ebs-gp3 variant of this parameter for Ubuntu
-  # 24.04+; 22.04 is only published as ebs-gp2. This is just the AMI's
-  # snapshot volume type, not the root volume we actually launch with (see
-  # block_device_mappings below, which forces gp3 regardless).
   name = "/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id"
 }
 
@@ -33,11 +29,13 @@ resource "aws_launch_template" "ex_broadcaster" {
   }
 
   user_data = base64encode(templatefile("${path.module}/user_data.sh.tpl", {
-    aws_region         = var.aws_region
-    ecr_repository_url = aws_ecr_repository.ex_broadcaster.repository_url
-    image_tag          = var.app_image_tag
-    s3_bucket          = aws_s3_bucket.hls.bucket
-    s3_prefix          = var.s3_prefix
+    aws_region              = var.aws_region
+    ecr_repository_url      = aws_ecr_repository.ex_broadcaster.repository_url
+    image_tag               = var.app_image_tag
+    s3_bucket               = aws_s3_bucket.hls.bucket
+    s3_prefix               = var.s3_prefix
+    app_log_group           = aws_cloudwatch_log_group.app.name
+    cloudwatch_agent_config = local.cloudwatch_agent_config
   }))
 
   tag_specifications {

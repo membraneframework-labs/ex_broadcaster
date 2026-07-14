@@ -8,13 +8,15 @@ FROM hexpm/elixir:${ELIXIR_VERSION}-erlang-${OTP_VERSION}-ubuntu-${UBUNTU_VERSIO
 
 ENV MIX_ENV=prod \
     LANG=C.UTF-8 \
-    DEBIAN_FRONTEND=noninteractive
+    DEBIAN_FRONTEND=noninteractive \
+    ERL_AFLAGS="+JMsingle true"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential \
       cmake \
       pkg-config \
       git \
+      curl \
       ca-certificates \
       nasm \
       yasm \
@@ -27,6 +29,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libswresample-dev \
       libavfilter-dev \
     && rm -rf /var/lib/apt/lists/*
+
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:$PATH
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable \
+    && rustc --version && cargo --version
 
 WORKDIR /app
 

@@ -52,6 +52,15 @@ resource "aws_iam_role_policy_attachment" "ssm_core" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
+# Covers both the CloudWatch Agent (host/GPU metrics + tailing the user-data
+# and syslog files) and docker's own awslogs log driver (container stdout/
+# stderr) — this managed policy already grants the logs:CreateLogGroup/
+# CreateLogStream/PutLogEvents and cloudwatch:PutMetricData actions both need.
+resource "aws_iam_role_policy_attachment" "cloudwatch_agent" {
+  role       = aws_iam_role.ex_broadcaster.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+}
+
 resource "aws_iam_instance_profile" "ex_broadcaster" {
   name = "ex-broadcaster-instance-profile"
   role = aws_iam_role.ex_broadcaster.name
