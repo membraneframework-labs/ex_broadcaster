@@ -21,6 +21,10 @@ defmodule ExBroadcaster.Pipeline do
   Each CMAF muxer produces a single muxed audio+video CMAF track delivered
   to the shared HLS sink, which writes segments and a master playlist.
 
+  Each output pad also carries its own target bitrate (`Membrane.Transcoder.Video.VariableBitrate`),
+  so the transcoder encodes a proper bitrate ladder alongside the resolution ladder instead of
+  leaving every variant at the encoder's default rate control.
+
   GPU requirements
   ----------------
   When `native_acceleration: :if_available` is set and `membrane_vk_video_plugin` is present,
@@ -36,6 +40,7 @@ defmodule ExBroadcaster.Pipeline do
   alias Membrane.HTTPAdaptiveStream
   alias Membrane.MP4.Muxer.CMAF, as: CMAFMuxer
   alias Membrane.Pad
+  alias Membrane.Transcoder.Video.VariableBitrate
 
   @variants [
     %{
@@ -43,21 +48,24 @@ defmodule ExBroadcaster.Pipeline do
       track_name: "1080p",
       width: 1920,
       height: 1080,
-      framerate: {30, 1}
+      framerate: {30, 1},
+      bitrate: %VariableBitrate{average_bitrate: 5_000_000, max_bitrate: 6_000_000}
     },
     %{
       id: :p720,
       track_name: "720p",
       width: 1280,
       height: 720,
-      framerate: {30, 1}
+      framerate: {30, 1},
+      bitrate: %VariableBitrate{average_bitrate: 2_800_000, max_bitrate: 3_500_000}
     },
     %{
       id: :p480,
       track_name: "480p",
       width: 854,
       height: 480,
-      framerate: {30, 1}
+      framerate: {30, 1},
+      bitrate: %VariableBitrate{average_bitrate: 1_400_000, max_bitrate: 1_750_000}
     }
   ]
 
@@ -129,7 +137,7 @@ defmodule ExBroadcaster.Pipeline do
   end
 
   defp build_variant_spec(variant, segment_duration) do
-    %{id: id, track_name: name, width: w, height: h, framerate: fps} = variant
+    %{id: id, track_name: name, width: w, height: h, framerate: fps, bitrate: bitrate} = variant
 
     video_to_muxer =
       get_child(:transcoder)
@@ -141,7 +149,8 @@ defmodule ExBroadcaster.Pipeline do
             framerate: fps,
             alignment: :au,
             stream_structure: :avc1
-          }
+          },
+          bitrate: bitrate
         ]
       )
       |> via_in(Pad.ref(:input, {:video, id}))

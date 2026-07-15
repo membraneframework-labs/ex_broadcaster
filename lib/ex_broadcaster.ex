@@ -7,11 +7,11 @@ defmodule ExBroadcaster do
 
   ## Variants
 
-  | Name  | Resolution  |
-  |-------|-------------|
-  | 1080p | 1920 × 1080 |
-  | 720p  | 1280 × 720  |
-  | 480p  | 854 × 480   |
+  | Name  | Resolution  | Bitrate (avg / max) |
+  |-------|-------------|----------------------|
+  | 1080p | 1920 × 1080 | 5.0 Mbps / 6.0 Mbps  |
+  | 720p  | 1280 × 720  | 2.8 Mbps / 3.5 Mbps  |
+  | 480p  | 854 × 480   | 1.4 Mbps / 1.75 Mbps |
 
   ## Usage
 

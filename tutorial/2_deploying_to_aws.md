@@ -16,19 +16,6 @@ By the end of this chapter, you will have:
 - a **CloudFront distribution** in front of that bucket, so HLS output is served from edge locations instead of a single region;
 - **CloudWatch** logs, GPU/host metrics, alarms, and a dashboard so you can actually tell whether the thing is healthy.
 
-Richer application-level observability is a large enough topic to warrant its own chapter later in this series —
-here we focus on getting the broadcaster itself running reliably in the cloud, with global distribution included.
-
-### Why not Kubernetes
-
-An earlier iteration of this project provisioned an EKS cluster with a GPU node group to run the broadcaster.
-For this workload that turned out to be the wrong amount of machinery: each pipeline is a single independent process
-tied to one RTMP connection, with no shared state besides the S3 bucket, and GPU passthrough on Kubernetes means
-wiring up an NVIDIA device plugin and matching node group AMIs on top of the cluster control plane itself.
-A plain Auto Scaling Group behind a load balancer gives us the same horizontal scaling with none of that —
-one less control plane to pay for and operate. If you outgrow this later (multiple services, more complex
-scheduling needs), revisiting Kubernetes is still an option, but it's not where you should start.
-
 ## Prerequisites
 
 You will need:
@@ -333,6 +320,53 @@ The stream should show up shortly after in the bucket, under the date-partitione
 
 If nothing shows up, the CloudWatch log groups set up next are the fastest way to find out why.
 
+## Streaming with OBS and watching with VLC
+
+`ffmpeg` is fine for a synthetic smoke test, but a real check of the end-to-end path means pushing a stream from an
+actual encoder and watching it back the way a viewer would.
+
+### Starting a stream with OBS
+
+1. Install [OBS Studio](https://obsproject.com/) if you don't already have it.
+2. Open **Settings → Stream**, set **Service** to `Custom...`, and fill in:
+   - **Server**: `rtmp://<nlb-dns-name>:1935/ex_broadcaster` (the `rtmp_ingest_endpoint` output, minus the trailing
+     `/key` — that part becomes the stream key below);
+   - **Stream Key**: any string you like, e.g. `obs-test`. It becomes the `<stream_key>` segment in the S3/CloudFront
+     path, so pick something you'll recognize when checking the bucket.
+3. Under **Settings → Output**, set the encoder to `x264` (or your GPU encoder of choice) and a bitrate around
+   2500–4000 Kbps for a 720p/1080p test — the transcoder on the EC2 side re-encodes the output anyway, so the
+   incoming bitrate mostly affects upload bandwidth, not final quality.
+4. Add a source (a window capture or a video file works well for a repeatable test) and click **Start Streaming**.
+
+OBS's connection indicator (bottom-right) turning green, with a steady bitrate and no dropped-frames warning,
+means the NLB accepted the connection and RTMP ingest is flowing into the ASG.
+
+### Watching the stream with VLC
+
+Once OBS is live, give the pipeline a few seconds to produce the first HLS segments, then open the playlist in
+[VLC](https://www.videolan.org/vlc/):
+
+- **Media → Open Network Stream**, and paste the playlist URL:
+
+```
+<hls_bucket_url>/hls/<year>/<month>/<day>/<hour>/obs-test/index.m3u8
+```
+
+or, if you've set up the CDN from [Setting up a CDN](#setting-up-a-cdn):
+
+```
+https://<cdn_domain_name>/<s3_prefix>/<year>/<month>/<day>/<hour>/obs-test/index.m3u8
+```
+
+(`<year>/<month>/<day>/<hour>` are UTC and match when you started streaming — the same date-partitioned prefix
+from chapter 1's `build_storage/1`; `obs-test` is whatever stream key you set above.)
+
+- Click **Play**. VLC should start playback within a few seconds, matching what's live in OBS with the usual HLS
+  latency (typically several seconds, from segment duration plus playlist propagation).
+
+If VLC can't fetch the playlist, double-check the prefix/date first — it's the most common mismatch — then fall
+back to the CloudWatch log groups below to see whether the container is actually receiving and writing segments.
+
 ## Monitoring
 
 `cloudwatch.tf` sets up logs, metrics, alarms, and a dashboard so you don't have to SSM into an instance to know
@@ -376,18 +410,6 @@ The same CloudWatch Agent config also collects host and, importantly, **GPU** me
 The `encoder_stats_*` metrics come straight from `nvidia-smi`'s NVENC session accounting, and are the closest
 thing to a direct measurement of "how much transcoding work is this box actually doing" — far more meaningful
 here than CPU, for the reasons covered above.
-
-### Alarms
-
-Three alarms feed a shared SNS topic (`aws_sns_topic.alarms`), with an optional email subscription if you set
-`alarm_email`:
-
-- **`unhealthy-targets`** — any RTMP target failing NLB health checks; the fastest signal that a specific
-  instance has gone bad, ahead of the ASG's own health-check-driven replacement.
-- **`no-healthy-targets`** — zero healthy targets left, i.e. a full ingest outage, distinct from "some targets
-  are unhealthy."
-- **`gpu-utilization-high`** — sustained GPU utilization above 95% for 15 minutes; not an outage, but a heads-up
-  that the fleet is close to its real capacity ceiling even if CPU-based scaling hasn't kicked in.
 
 ### Dashboard
 

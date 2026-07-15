@@ -3,16 +3,14 @@
 # in s3.tf already allows unauthenticated s3:GetObject — CloudFront just adds edge caching and
 # HTTPS/HTTP2-3 in front of that same, already-public origin.
 
-data "aws_cloudfront_cache_policy" "caching_optimized" {
-  name = "Managed-CachingOptimized"
-}
-
-data "aws_cloudfront_cache_policy" "caching_disabled" {
-  name = "Managed-CachingDisabled"
-}
-
-data "aws_cloudfront_origin_request_policy" "cors_s3_origin" {
-  name = "Managed-CORS-S3Origin"
+# Hardcoded IDs for AWS-managed CloudFront policies (stable across all accounts/regions).
+# Using the IDs directly instead of the data.aws_cloudfront_cache_policy/data.aws_cloudfront_origin_request_policy
+# data sources avoids requiring cloudfront:ListCachePolicies/ListOriginRequestPolicies permissions,
+# which the deploying IAM user doesn't have.
+locals {
+  cloudfront_cache_policy_caching_optimized_id = "658327ea-f89d-4fab-a63d-7e88639e58f6"
+  cloudfront_cache_policy_caching_disabled_id  = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
+  cloudfront_origin_request_policy_cors_s3_id  = "88a5eaf4-2fd4-4709-b370-b4c650ea3fcf"
 }
 
 resource "aws_cloudfront_distribution" "hls" {
@@ -43,8 +41,8 @@ resource "aws_cloudfront_distribution" "hls" {
     allowed_methods          = ["GET", "HEAD"]
     cached_methods           = ["GET", "HEAD"]
     compress                 = true
-    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_optimized.id
-    origin_request_policy_id = data.aws_cloudfront_origin_request_policy.cors_s3_origin.id
+    cache_policy_id          = local.cloudfront_cache_policy_caching_optimized_id
+    origin_request_policy_id = local.cloudfront_origin_request_policy_cors_s3_id
   }
 
   # Playlists (.m3u8): rewritten on every new segment, must not be cached at the edge or
@@ -56,8 +54,8 @@ resource "aws_cloudfront_distribution" "hls" {
     allowed_methods          = ["GET", "HEAD"]
     cached_methods           = ["GET", "HEAD"]
     compress                 = true
-    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
-    origin_request_policy_id = data.aws_cloudfront_origin_request_policy.cors_s3_origin.id
+    cache_policy_id          = local.cloudfront_cache_policy_caching_disabled_id
+    origin_request_policy_id = local.cloudfront_origin_request_policy_cors_s3_id
   }
 
   restrictions {

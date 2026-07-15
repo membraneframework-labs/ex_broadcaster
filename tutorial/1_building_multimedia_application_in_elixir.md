@@ -301,11 +301,33 @@ defmodule ExBroadcaster.Pipeline do
   alias HTTPAdaptiveStream.Sink, as: HTTPAdaptiveStreamSink
   alias Membrane.MP4.Muxer.CMAF, as: CMAFMuxer
   alias Membrane.Pad
+  alias Membrane.Transcoder.Video.VariableBitrate
 
   @variants [
-    %{id: :p1080, track_name: "1080p", width: 1920, height: 1080, framerate: {30, 1}},
-    %{id: :p720,  track_name: "720p",  width: 1280, height: 720,  framerate: {30, 1}},
-    %{id: :p480,  track_name: "480p",  width: 854,  height: 480,  framerate: {30, 1}}
+    %{
+      id: :p1080,
+      track_name: "1080p",
+      width: 1920,
+      height: 1080,
+      framerate: {30, 1},
+      bitrate: %VariableBitrate{average_bitrate: 5_000_000, max_bitrate: 6_000_000}
+    },
+    %{
+      id: :p720,
+      track_name: "720p",
+      width: 1280,
+      height: 720,
+      framerate: {30, 1},
+      bitrate: %VariableBitrate{average_bitrate: 2_800_000, max_bitrate: 3_500_000}
+    },
+    %{
+      id: :p480,
+      track_name: "480p",
+      width: 854,
+      height: 480,
+      framerate: {30, 1},
+      bitrate: %VariableBitrate{average_bitrate: 1_400_000, max_bitrate: 1_750_000}
+    }
   ]
 
   def start_link(opts) do
@@ -410,10 +432,12 @@ A few things worth noting:
 
 - **Single `Membrane.Transcoder` with multiple outputs** — Starting from v0.4.0, `Membrane.Transcoder` supports multiple output pads.
   We configure a single transcoder instance with three output pads, each producing a different resolution variant (1080p, 720p, 480p).
-  Each output pad has its own `output_stream_format` specifying the target resolution.
-  `transcoding_policy: :always` and `native_acceleration: :if_available` are set once, on the transcoder child itself, and apply
-  to all of its output pads — `native_acceleration: :if_available` enables Vulkan Video hardware acceleration when the
-  `membrane_vk_video_plugin` dependency is present and the system supports it.
+  Each output pad has its own `output_stream_format` (target resolution) and `bitrate` (target bitrate ladder).
+  `transcoding_policy: :always` and `native_acceleration: :if_available` are set once, on the transcoder child itself; every
+  output pad also accepts its own `transcoding_policy`/`native_acceleration`/`bitrate` that, when left unset (`nil`, the
+  default), simply inherits the child-level value — we only need to override `bitrate` per pad here, since that's the one
+  setting that has to differ between variants. `native_acceleration: :if_available` enables Vulkan Video hardware
+  acceleration when the `membrane_vk_video_plugin` dependency is present and the system supports it.
 - **`Membrane.Tee` for audio fan-out** — audio is parsed once and replicated to each CMAF muxer
   via dynamic output pads. There is no audio re-encoding.
 - **One `CMAF.Muxer` per variant** — each muxer receives exactly one video pad (from transcoder) and one audio pad (from tee),
@@ -486,7 +510,7 @@ one for video, one for audio — that together form a single resolution variant:
 ```elixir
 # lib/ex_broadcaster/pipeline.ex
   defp build_variant_spec(variant, segment_duration) do
-    %{id: id, track_name: name, width: w, height: h, framerate: fps} = variant
+    %{id: id, track_name: name, width: w, height: h, framerate: fps, bitrate: bitrate} = variant
 
     # Video path: from transcoder output pad to CMAF muxer
     video_to_muxer =
@@ -499,7 +523,8 @@ one for video, one for audio — that together form a single resolution variant:
             framerate: fps,
             alignment: :au,
             stream_structure: :avc1
-          }
+          },
+          bitrate: bitrate
         ]
       )
       |> via_in(Pad.ref(:input, {:video, id}))
@@ -526,13 +551,20 @@ one for video, one for audio — that together form a single resolution variant:
 
 The **video chain** (`video_to_muxer`) starts from the single transcoder's output pad (referenced by variant `id`).
 Each output pad is opened with `via_out(Pad.ref(:output, id), options: [...])`,
-passing the encoding parameters for this variant via `output_stream_format`:
-target resolution, framerate, alignment, and stream structure (set to `avc1` for CMAF compatibility).
-`transcoding_policy` and `native_acceleration` are *not* pad options — they were already set once when the transcoder
-child itself was created (see above), and apply uniformly to every output pad; passing them here as well raises a
-`Membrane.LinkError` (`Invalid keys in options of pad :output`), since the `:output` pad only accepts `output_stream_format`.
-The transcoder automatically handles the stream format conversion for each variant. The muxer output is then linked into the
-shared `:hls_sink`, with per-track metadata such as `track_name` and `max_framerate` passed via `via_in` options.
+passing the encoding parameters for this variant via `output_stream_format`
+(target resolution, framerate, alignment, and stream structure — set to `avc1` for CMAF compatibility) and `bitrate`
+(a `Membrane.Transcoder.Video.VariableBitrate` struct with an `average_bitrate` the encoder targets over the whole
+stream and a `max_bitrate` cap on momentary spikes, both in bits per second — `Membrane.Transcoder.Video.ConstantBitrate`
+is also available if you'd rather hold a fixed rate instead). We don't repeat `transcoding_policy` or
+`native_acceleration` here since both default to `nil` on the `:output` pad, which means "inherit from the transcoder
+child's own setting" — passing a value here would only be needed to *override* the child-level default for one
+specific variant. The transcoder automatically handles the stream format and bitrate conversion for each variant.
+The muxer output is then linked into the shared `:hls_sink`, with per-track metadata such as `track_name` and
+`max_framerate` passed via `via_in` options.
+
+A per-resolution bitrate is what actually makes the HLS ladder useful: without it, all three variants would be encoded
+at whatever default rate control the underlying encoder falls back to (e.g. CRF-based for H.264/H.265), which doesn't
+reliably produce three *meaningfully different* bitrates for a player to switch between based on network conditions.
 
 The **audio chain** (`audio_to_muxer`) taps the `:audio_tee` at a dynamic output pad keyed by `id`
 and feeds directly into the same `{:cmaf_muxer, id}` that the video chain already created.

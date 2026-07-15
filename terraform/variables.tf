@@ -11,10 +11,6 @@ variable "gpu_enabled" {
 }
 
 variable "instance_type" {
-  # Leave unset to pick a sensible default from gpu_enabled: g6.xlarge
-  # (NVIDIA L4, matching the GPU node group previously used for the EKS
-  # setup) when true, c6i.large (compute-optimized, no GPU) when false. Set
-  # explicitly to override either default.
   description = "Instance type for the ASG. If null, derived from gpu_enabled (see locals.instance_type in asg.tf)"
   type        = string
   default     = null
