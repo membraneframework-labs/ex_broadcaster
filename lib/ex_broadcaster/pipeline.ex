@@ -141,9 +141,7 @@ defmodule ExBroadcaster.Pipeline do
             framerate: fps,
             alignment: :au,
             stream_structure: :avc1
-          },
-          transcoding_policy: :always,
-          native_acceleration: :if_available
+          }
         ]
       )
       |> via_in(Pad.ref(:input, {:video, id}))
