@@ -69,3 +69,15 @@ variable "alarm_email" {
   type        = string
   default     = ""
 }
+
+variable "enable_cdn" {
+  description = "Whether to provision a CloudFront distribution in front of the HLS bucket"
+  type        = bool
+  default     = true
+}
+
+variable "cloudfront_price_class" {
+  description = "CloudFront price class — PriceClass_100 (NA/EU edge locations only, cheapest), PriceClass_200 (adds Asia/Africa/Oceania), or PriceClass_All (every edge location)"
+  type        = string
+  default     = "PriceClass_100"
+}

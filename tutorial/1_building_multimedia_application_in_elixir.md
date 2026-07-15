@@ -108,6 +108,7 @@ defp deps do
  [
       {:membrane_core, "~> 1.2"},
       {:membrane_transcoder_plugin, "~> 0.4.0"},
+      {:membrane_vk_video_plugin, "> 0.0.0"},
       {:membrane_rtmp_plugin, "~> 0.29.3"},
       {:membrane_http_adaptive_stream_plugin, "~> 0.21.0"},
       {:membrane_mp4_plugin, "~> 0.36.0"},
@@ -121,12 +122,13 @@ We need the following packages:
 
 - [`membrane_core`](https://hexdocs.pm/membrane_core) — to specify the pipeline structure
 - [`membrane_transcoder_plugin`](https://hexdocs.pm/membrane_transcoder_plugin) — for transcoding capabilities with optional Vulkan Video native acceleration
+- [`membrane_vk_video_plugin`](https://hexdocs.pm/membrane_vk_video_plugin) — hardware-accelerated Vulkan Video encoding/decoding, used internally by `membrane_transcoder_plugin` when `native_acceleration: :if_available` is set. `membrane_transcoder_plugin` treats it as an *optional* dependency (so the transcoder falls back to software encoding if it's absent), but we depend on it directly here so Vulkan Video is actually available at runtime on GPU-capable hosts.
 - [`membrane_rtmp_plugin`](https://hexdocs.pm/membrane_rtmp_plugin) — for RTMP ingestion source
 - [`membrane_http_adaptive_stream_plugin`](https://hexdocs.pm/membrane_http_adaptive_stream_plugin) — for HLS playlist generation
 - [`membrane_mp4_plugin`](https://hexdocs.pm/membrane_mp4_plugin) — for wrapping stream in CMAF container
 - [`membrane_aac_plugin`](https://hexdocs.pm/membrane_aac_plugin) — to change the stream structure of audio streams (so that they "fit" in CMAF container)
 
-> **Note on Vulkan Video acceleration**: The `membrane_transcoder_plugin` can optionally use `membrane_vk_video_plugin` for hardware-accelerated encoding/decoding via Vulkan Video. To enable this, add `{:membrane_vk_video_plugin, "~> 0.2.0"}` to your dependencies. Note that Vulkan Video is currently only available on Linux with a compatible GPU (NVIDIA or AMD with Mesa drivers) and requires the appropriate Vulkan extensions.
+Vulkan Video itself is currently only available on Linux with a compatible GPU (NVIDIA or AMD with Mesa drivers) and the appropriate Vulkan extensions — on any other setup, `Membrane.Transcoder` just falls back to software encoding, so the dependency doesn't prevent the pipeline from running elsewhere.
 
 Download the dependencies with:
 
@@ -409,8 +411,9 @@ A few things worth noting:
 - **Single `Membrane.Transcoder` with multiple outputs** — Starting from v0.4.0, `Membrane.Transcoder` supports multiple output pads.
   We configure a single transcoder instance with three output pads, each producing a different resolution variant (1080p, 720p, 480p).
   Each output pad has its own `output_stream_format` specifying the target resolution.
-  The `native_acceleration: :if_available` option enables Vulkan Video hardware acceleration when the `membrane_vk_video_plugin`
-  dependency is present and the system supports it.
+  `transcoding_policy: :always` and `native_acceleration: :if_available` are set once, on the transcoder child itself, and apply
+  to all of its output pads — `native_acceleration: :if_available` enables Vulkan Video hardware acceleration when the
+  `membrane_vk_video_plugin` dependency is present and the system supports it.
 - **`Membrane.Tee` for audio fan-out** — audio is parsed once and replicated to each CMAF muxer
   via dynamic output pads. There is no audio re-encoding.
 - **One `CMAF.Muxer` per variant** — each muxer receives exactly one video pad (from transcoder) and one audio pad (from tee),
@@ -496,9 +499,7 @@ one for video, one for audio — that together form a single resolution variant:
             framerate: fps,
             alignment: :au,
             stream_structure: :avc1
-          },
-          transcoding_policy: :always,
-          native_acceleration: :if_available
+          }
         ]
       )
       |> via_in(Pad.ref(:input, {:video, id}))
@@ -527,10 +528,11 @@ The **video chain** (`video_to_muxer`) starts from the single transcoder's outpu
 Each output pad is opened with `via_out(Pad.ref(:output, id), options: [...])`,
 passing the encoding parameters for this variant via `output_stream_format`:
 target resolution, framerate, alignment, and stream structure (set to `avc1` for CMAF compatibility).
-The `transcoding_policy: :always` ensures video is re-encoded for each variant,
-and `native_acceleration: :if_available` enables Vulkan Video hardware acceleration when available.
-The transcoder automatically handles the stream format conversion. The muxer output is then linked into the shared `:hls_sink`,
-with per-track metadata such as `track_name` and `max_framerate` passed via `via_in` options.
+`transcoding_policy` and `native_acceleration` are *not* pad options — they were already set once when the transcoder
+child itself was created (see above), and apply uniformly to every output pad; passing them here as well raises a
+`Membrane.LinkError` (`Invalid keys in options of pad :output`), since the `:output` pad only accepts `output_stream_format`.
+The transcoder automatically handles the stream format conversion for each variant. The muxer output is then linked into the
+shared `:hls_sink`, with per-track metadata such as `track_name` and `max_framerate` passed via `via_in` options.
 
 The **audio chain** (`audio_to_muxer`) taps the `:audio_tee` at a dynamic output pad keyed by `id`
 and feeds directly into the same `{:cmaf_muxer, id}` that the video chain already created.
@@ -659,6 +661,48 @@ http://localhost:8080/key/index.m3u8
 You can open this URL directly in a browser with native HLS support (e.g. Safari or Chrome).
 Alternatively, paste it into the [hls.js demo player](https://hlsjs.video-dev.org/demo/) (local HTTP server is configure to allow all CORS origins).
 You should be able to see that the resolution changes throughout based on your network condition or even manually change it.
+
+### Streaming from OBS Studio instead of FFmpeg
+
+The FFmpeg command above is convenient for a quick smoke test, but a real streamer will be pushing video from
+[OBS Studio](https://obsproject.com/). Pointing it at your local server takes two fields:
+
+1. Open **Settings → Stream**.
+2. Set **Service** to `Custom...`.
+3. Set **Server** to `rtmp://localhost:1935/ex_broadcaster` — everything up to the stream key is the RTMP `app` name
+   (`ex_broadcaster` here, matching what `handle_new_client/3` receives as `app`; it isn't checked against anything,
+   so any value works as long as it's consistent).
+4. Set **Stream Key** to any value you like, e.g. `key` — this becomes the `stream_key` your pipeline uses to name
+   its output directory (`output/hls/<stream_key>/`) or S3 prefix.
+5. Click **Apply**, close Settings, then click **Start Streaming** in the main OBS window.
+
+You should see `[App] New RTMP client: app=ex_broadcaster, stream_key=key` in your `mix run --no-halt` logs the
+moment OBS connects. From here, playback works exactly as described above:
+`http://localhost:8080/key/index.m3u8`.
+
+A couple of things worth checking if the stream doesn't show up:
+
+- OBS's **Output** settings must be set to encode H.264 video and AAC audio (the default `x264`/simple output mode
+  already does this) — the pipeline's `H264.Parser` and `AAC.Parser` expect exactly those codecs coming out of the
+  RTMP source.
+- The bottom-right status bar in OBS shows the live connection state; "Reconnecting..." there usually means the
+  server isn't reachable at the address/port you configured, not a codec problem.
+
+### Watching the stream in VLC
+
+Any HLS-capable player works against the `index.m3u8` URL, including [VLC](https://www.videolan.org/vlc/):
+
+1. Open VLC and go to **Media → Open Network Stream** (macOS: **File → Open Network...**).
+2. Paste `http://localhost:8080/key/index.m3u8` into the URL field (swap `key` for whatever stream key you used).
+3. Click **Play**.
+
+VLC will start playback once the pipeline has written the first few segments — expect a few seconds of delay after
+you start streaming from OBS before anything appears, roughly equal to `segment_duration_sec` times the HLS
+player's default startup buffering (a few segments). To confirm adaptive switching is actually working, open
+**Tools → Media Information → Statistics** while playing — the reported video resolution/bitrate should match
+whichever variant VLC is currently pulling, and you can force a specific one from **Video → Video Track**... though
+which variants a player exposes there depends on its own ABR implementation, so this menu may just show one entry
+for "HTTP Live Streaming" rather than per-resolution tracks.
 
 ## Adding S3 storage
 

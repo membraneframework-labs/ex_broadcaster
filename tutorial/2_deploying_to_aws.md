@@ -13,10 +13,11 @@ By the end of this chapter, you will have:
 - a Docker image of the release, built for `linux/amd64` and pushed to a private **ECR** repository;
 - a fleet of GPU-capable EC2 instances running that image, managed by an **Auto Scaling Group** and reachable through a **Network Load Balancer** for RTMP ingest;
 - the **S3 bucket** from chapter 1, now provisioned by Terraform alongside everything else;
+- a **CloudFront distribution** in front of that bucket, so HLS output is served from edge locations instead of a single region;
 - **CloudWatch** logs, GPU/host metrics, alarms, and a dashboard so you can actually tell whether the thing is healthy.
 
-CDN configuration for global HLS distribution and richer application-level observability are large enough topics
-to warrant their own chapters later in this series — here we focus on getting the broadcaster itself running reliably in the cloud.
+Richer application-level observability is a large enough topic to warrant its own chapter later in this series —
+here we focus on getting the broadcaster itself running reliably in the cloud, with global distribution included.
 
 ### Why not Kubernetes
 
@@ -55,6 +56,7 @@ graph LR
     ASG["Auto Scaling Group\nGPU instances · private subnets"]
     ECR[("ECR\nex-broadcaster image")]
     S3[("S3 bucket\nHLS segments + playlists")]
+    CDN["CloudFront\nedge-cached distribution"]
     CW["CloudWatch\nLogs · Metrics · Alarms · Dashboard"]
     Viewer([Viewer])
 
@@ -63,7 +65,8 @@ graph LR
     ECR -. "docker pull\n(on instance boot)" .-> ASG
     ASG -- "PutObject" --> S3
     ASG -- "logs + GPU metrics" --> CW
-    S3 -- "HLS over HTTP\n(CDN in a later chapter)" --> Viewer
+    S3 -- "origin fetch" --> CDN
+    CDN -- "HLS over HTTPS\n(edge-cached)" --> Viewer
 ```
 
 The Terraform configuration is split into one file per concern:
@@ -76,9 +79,9 @@ The Terraform configuration is split into one file per concern:
 | `ecr.tf` | The ECR repository the image is pushed to, with a lifecycle policy |
 | `iam.tf` | The instance role/profile: scoped S3 access, ECR pull, SSM, CloudWatch Agent |
 | `s3.tf` | The HLS bucket, its public-read policy, and CORS configuration |
+| `cloudfront.tf` | The CloudFront distribution fronting the HLS bucket for edge caching |
 | `asg.tf` | The GPU launch template, Auto Scaling Group, and CPU-based scaling policy |
 | `nlb.tf` | The Network Load Balancer and TCP target group for RTMP |
-| `ssh.tf` | An SSH key pair for SSM Session Manager-tunnelled debugging access |
 | `cloudwatch.tf` | Log groups, alarms, an SNS topic, and the monitoring dashboard |
 | `user_data.sh.tpl` | The instance bootstrap script (installs Docker/NVIDIA/CloudWatch Agent, runs the container) |
 | `variables.tf` | Everything above, parameterized |
@@ -118,6 +121,13 @@ aws service-quotas get-requested-service-quota-change \
 Approval is often instant but can take up to a day or two for larger increases — request it first, then move on to
 the rest of the setup while you wait.
 
+You don't have to sit around waiting for it, though: set `gpu_enabled = false` (in `terraform.tfvars` or via
+`terraform apply -var="gpu_enabled=false"`) and the ASG falls back to a `c6i.large` (no GPU, no Vulkan Video quota needed) instead
+of `g6.xlarge`, so you can bring up the rest of the stack and exercise it end-to-end immediately. Vulkan Video
+hardware acceleration just won't be available on that fleet, so `Membrane.Transcoder` falls back to software
+encoding — fine for getting everything wired up, but switch back to `gpu_enabled = true` (the default) once your
+quota is approved if you want hardware-accelerated transcoding in production.
+
 ## Initializing Terraform
 
 From the `terraform/` directory:
@@ -136,7 +146,7 @@ variable "asg_min_size"         { default = 1 }
 variable "asg_max_size"         { default = 3 }
 variable "asg_desired_capacity" { default = 1 }
 variable "cpu_target_value"     { default = 60 }            # target-tracking scaling threshold
-variable "root_volume_size_gb"  { default = 80 }
+variable "root_volume_size_gb"  { default = 20 }
 variable "app_image_tag"        { default = "latest" }
 variable "s3_prefix"            { default = "hls" }
 variable "log_retention_days"   { default = 14 }
@@ -149,47 +159,6 @@ availability zones dynamically via the `aws_availability_zones` data source rath
 to one region. To deploy elsewhere, override it (e.g. `terraform apply -var="aws_region=us-east-1"`, or set it in
 a `terraform.tfvars` file) — just make sure `g6.xlarge` (or whichever `instance_type` you choose) is actually
 offered there, and that you request the GPU quota increase above in that same region.
-
-State is kept locally for this tutorial (`.gitignore` already excludes `*.tfstate*`, `.pem` key files, and
-`terraform.tfvars` so you don't accidentally commit secrets) — for a team setup you'd point this at a remote
-backend (e.g. S3 + DynamoDB locking) instead, but that's outside the scope of this chapter.
-
-## Provisioning the ECR repository
-
-The Auto Scaling Group's launch template needs to reference an image URL that already exists, and we need
-somewhere to push our image *before* any instance boots — so create just the ECR repository first:
-
-```sh
-terraform apply -target=aws_ecr_repository.ex_broadcaster
-```
-
-```hcl
-# terraform/ecr.tf
-resource "aws_ecr_repository" "ex_broadcaster" {
-  name                 = "ex-broadcaster"
-  image_tag_mutability = "MUTABLE"
-
-  image_scanning_configuration {
-    scan_on_push = true
-  }
-}
-
-resource "aws_ecr_lifecycle_policy" "ex_broadcaster" {
-  repository = aws_ecr_repository.ex_broadcaster.name
-
-  policy = jsonencode({
-    rules = [{
-      rulePriority = 1
-      description  = "Expire untagged images after 7 days"
-      selection    = { tagStatus = "untagged", countType = "sinceImagePushed", countUnit = "days", countNumber = 7 }
-      action       = { type = "expire" }
-    }]
-  })
-}
-```
-
-`scan_on_push` gets you a basic vulnerability scan of the base image and its OS packages on every push, and the
-lifecycle policy keeps the repository from accumulating untagged images left behind by repeated pushes to `:latest`.
 
 ## Building and pushing the image
 
@@ -233,79 +202,6 @@ terraform apply
 ```
 
 A few of these resources are worth understanding before you run it.
-
-### Networking and security
-
-`vpc.tf` provisions a VPC (via the community `terraform-aws-modules/vpc/aws` module) with public subnets for the
-load balancer and private subnets for the instances, connected through a single NAT gateway so the instances can
-reach ECR/S3/SSM without a public IP of their own:
-
-```hcl
-# terraform/vpc.tf
-data "aws_availability_zones" "available" {
-  state = "available"
-}
-
-module "vpc" {
-  source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 5.0"
-
-  name = "ex-broadcaster-vpc"
-  cidr = "10.0.0.0/16"
-
-  azs             = slice(data.aws_availability_zones.available.names, 0, 2)
-  private_subnets = ["10.0.1.0/24", "10.0.2.0/24"]
-  public_subnets  = ["10.0.101.0/24", "10.0.102.0/24"]
-
-  enable_nat_gateway = true
-  single_nat_gateway = true
-}
-```
-
-The `aws_availability_zones` data source picks its two AZs from whichever region the provider is configured for
-(`providers.tf` sets `provider "aws" { region = var.aws_region }`), instead of hardcoding AZ names from one
-specific region — so changing `var.aws_region` is genuinely enough to redeploy the whole stack somewhere else.
-
-`security_groups.tf` opens only what's needed: port 1935 (RTMP) from anywhere — it has to stay world-open since
-the NLB preserves the client's source IP rather than presenting its own — and no inbound SSH at all. Debugging
-access goes over an SSM Session Manager tunnel instead (`ssh.tf`), so there's no port 22 exposure to manage or
-forget about; `iam.tf` attaches `AmazonSSMManagedInstanceCore` to the instance role and the Ubuntu AMI ships the
-SSM Agent preinstalled, so no extra bootstrapping is required. If you do need a shell:
-
-```sh
-terraform output -raw ssh_private_key_pem > ex-broadcaster.pem && chmod 400 ex-broadcaster.pem
-aws ssm start-session --target <instance-id> \
-  --document-name AWS-StartSSHSession --parameters portNumber=22
-```
-
-### The instance role
-
-`iam.tf` defines a single role attached to every instance in the fleet, scoped to exactly what the application
-and its bootstrap script need:
-
-```hcl
-# terraform/iam.tf
-resource "aws_iam_role_policy" "hls_bucket_access" {
-  # s3:GetObject / PutObject / DeleteObject on the HLS bucket's objects, s3:ListBucket on the bucket itself
-}
-
-resource "aws_iam_role_policy_attachment" "ecr_read_only" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
-}
-
-resource "aws_iam_role_policy_attachment" "ssm_core" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-}
-
-resource "aws_iam_role_policy_attachment" "cloudwatch_agent" {
-  policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
-}
-```
-
-Because the instance has S3 access via this role, `ex_aws`'s default credential chain picks it up automatically
-through the instance metadata service — the application never needs static `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`
-values in production, only `AWS_REGION`, `S3_BUCKET`, and `S3_PREFIX` (set in the `docker run` command in
-`user_data.sh.tpl`, see below).
 
 ### The S3 bucket
 
@@ -372,26 +268,6 @@ Two things worth flagging, both left as known limitations rather than hidden:
   terminates whatever streams happen to be running on that instance with no warning. A production setup would add
   an `aws_autoscaling_lifecycle_hook` that waits for zero active pipelines (the application already tracks this
   via `DynamicSupervisor.count_children/1`) before allowing termination.
-
-### The load balancer
-
-`nlb.tf` fronts the fleet with a Network Load Balancer doing plain TCP passthrough on port 1935 — RTMP isn't HTTP,
-so this has to be a Layer 4 balancer, not an ALB:
-
-```hcl
-# terraform/nlb.tf
-resource "aws_lb" "rtmp" {
-  load_balancer_type                = "network"
-  subnets                            = module.vpc.public_subnets
-  enable_cross_zone_load_balancing  = true  # otherwise the AZ without a healthy target fails ~50% of connections
-}
-
-resource "aws_lb_target_group" "rtmp" {
-  port                  = 1935
-  protocol              = "TCP"
-  deregistration_delay  = 120  # give in-flight streams a chance to finish before a target is fully deregistered
-}
-```
 
 ## Instance bootstrap
 
@@ -520,6 +396,93 @@ sessions/fps, ASG CPU utilization, and NLB healthy/unhealthy target counts — o
 `cloudwatch_dashboard_url` output links straight to it in the console; it's the first thing worth checking after
 starting a test stream, and the first thing worth checking if a viewer reports a problem.
 
+## Setting up a CDN
+
+Right now viewers fetch HLS segments straight from the S3 bucket — that works, but every request round-trips to a
+single region, which is a rough deal for a viewer on the other side of the world. `cloudfront.tf` puts a CloudFront
+distribution in front of the same bucket so segments and playlists get cached at edge locations close to viewers
+instead.
+
+```hcl
+# terraform/cloudfront.tf
+resource "aws_cloudfront_distribution" "hls" {
+  count = var.enable_cdn ? 1 : 0
+
+  origin {
+    domain_name = aws_s3_bucket.hls.bucket_regional_domain_name
+    origin_id   = "hls-s3-origin"
+
+    custom_origin_config {
+      origin_protocol_policy = "https-only"
+      origin_ssl_protocols   = ["TLSv1.2"]
+      http_port              = 80
+      https_port             = 443
+    }
+  }
+
+  default_cache_behavior {
+    target_origin_id = "hls-s3-origin"
+    cache_policy_id  = data.aws_cloudfront_cache_policy.caching_optimized.id
+    ...
+  }
+
+  ordered_cache_behavior {
+    path_pattern     = "*.m3u8"
+    target_origin_id = "hls-s3-origin"
+    cache_policy_id  = data.aws_cloudfront_cache_policy.caching_disabled.id
+    ...
+  }
+}
+```
+
+A few things worth understanding before you apply it:
+
+- **Custom origin, not Origin Access Control.** The bucket already has a public-read policy
+  (`aws_s3_bucket_policy.hls_public_read` in `s3.tf`) so `hls.js`-based players can hit it directly during local
+  testing. CloudFront just points at that same public REST endpoint as a plain HTTPS origin — no OAC, no bucket
+  policy changes needed. The tradeoff: the bucket stays reachable directly, bypassing the CDN, so cost/traffic
+  controls only apply to whoever actually uses the CloudFront URL. If you want to *force* all traffic through the
+  CDN, that means switching to an Origin Access Control and dropping the public bucket policy — a reasonable
+  next hardening step, but a bigger change than this chapter covers.
+- **Two cache behaviors, because segments and playlists behave very differently.** Segments (`.m4s`/`.mp4`) are
+  immutable once written — a given segment's bytes never change — so the default behavior uses the
+  `Managed-CachingOptimized` policy and caches them aggressively at the edge. Playlists (`.m3u8`) are rewritten on
+  every new segment, so they're routed to `ordered_cache_behavior { path_pattern = "*.m3u8" }` using
+  `Managed-CachingDisabled` — if the manifest were cached, viewers would keep getting served a stale segment list
+  and playback would stall or repeat.
+- **`enable_cdn` is a toggle, not a hard requirement.** Set `enable_cdn = false` if you want to skip CloudFront
+  entirely (e.g. while iterating quickly and not wanting to wait for distribution deployment, which typically
+  takes several minutes) — the ASG will keep working exactly as before, writing to and serving straight from S3.
+- **`cloudfront_price_class`** controls which edge locations are used, trading reach for cost: `PriceClass_100`
+  (North America + Europe, cheapest, the default here), `PriceClass_200` (adds Asia/Africa/Oceania), or
+  `PriceClass_All`. Pick based on where your actual viewers are.
+
+Apply it the same way as the rest of the stack:
+
+```sh
+terraform apply
+```
+
+CloudFront distributions take several minutes to deploy (state goes `InProgress` → `Deployed` in the console or via
+`aws cloudfront get-distribution --id <id>`), noticeably slower than most other resources here — don't be surprised
+if `terraform apply` sits for a while on this one. Once it's done:
+
+```sh
+terraform output cdn_domain_name    # d111111abcdef8.cloudfront.net
+```
+
+Point viewers at `https://<cdn_domain_name>/<s3_prefix>/<year>/<month>/<day>/<hour>/<stream_key>/index.m3u8` instead
+of the raw `hls_bucket_url` — same path, just served from the edge. A quick way to confirm it's actually cached at
+the edge rather than round-tripping to the origin on every request:
+
+```sh
+curl -sI "https://<cdn_domain_name>/<...>/index.m3u8" | grep -i x-cache
+```
+
+`x-cache: Hit from cloudfront` means CloudFront served it from cache; `Miss from cloudfront` means it fetched from
+S3 that time (expected for the very first request to a given path, or for playlist requests since those are
+intentionally never cached).
+
 ## Cleaning up
 
 GPU instances are not cheap, and this stack also runs a NAT gateway around the clock. When you're done
@@ -533,9 +496,10 @@ Note that this will not empty the S3 bucket first if it contains objects — eit
 (`aws s3 rm s3://<bucket> --recursive`) or add a `force_destroy = true` to `aws_s3_bucket.hls` before destroying
 if you don't need to keep the recordings.
 
-## What's next
+## Conclusion
 
-The broadcaster now runs on real infrastructure, with autoscaling, GPU acceleration, and enough observability to
-know when something's wrong. What's still missing from the original roadmap is global distribution — right now,
-viewers fetch HLS segments directly from a single-region S3 bucket, which works but isn't how you'd serve a
-worldwide audience with low latency. That's the subject of the next chapter: putting a CDN in front of this bucket.
+The broadcaster now runs on real infrastructure: a GPU-capable Auto Scaling Group behind a Network Load Balancer
+ingests RTMP and transcodes with Vulkan Video hardware acceleration, output lands in S3 and gets served globally
+through CloudFront, and CloudWatch logs, metrics, alarms, and a dashboard mean you don't have to SSM into a box to
+know whether the system is healthy. All of it is defined in Terraform, so standing up a second environment or
+tearing this one down is a single command either way.
