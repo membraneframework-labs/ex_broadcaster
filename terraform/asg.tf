@@ -1,5 +1,5 @@
 data "aws_ssm_parameter" "ubuntu_ami" {
-  name = "/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id"
+  name = "/aws/service/canonical/ubuntu/server/26.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
 }
 
 locals {
@@ -65,7 +65,7 @@ resource "aws_autoscaling_group" "ex_broadcaster" {
 
   launch_template {
     id      = aws_launch_template.ex_broadcaster.id
-    version = "$Latest"
+    version = aws_launch_template.ex_broadcaster.latest_version
   }
 
   instance_refresh {

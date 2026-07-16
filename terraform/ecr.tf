@@ -22,6 +22,17 @@ resource "aws_ecr_lifecycle_policy" "ex_broadcaster" {
           countNumber = 7
         }
         action = { type = "expire" }
+      },
+      {
+        rulePriority = 2
+        description  = "Keep only the last 10 tagged images"
+        selection = {
+          tagStatus      = "tagged"
+          tagPatternList = ["*"]
+          countType      = "imageCountMoreThan"
+          countNumber    = 10
+        }
+        action = { type = "expire" }
       }
     ]
   })

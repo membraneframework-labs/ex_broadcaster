@@ -80,7 +80,7 @@ resource "aws_cloudwatch_metric_alarm" "gpu_utilization_high" {
   count               = var.gpu_enabled ? 1 : 0
   alarm_name          = "ex-broadcaster-gpu-utilization-high"
   namespace           = "ExBroadcaster"
-  metric_name         = "utilization_gpu"
+  metric_name         = "nvidia_smi_utilization_gpu"
   statistic           = "Average"
   period              = 300
   evaluation_periods  = 3
@@ -101,14 +101,14 @@ locals {
     {
       title = "GPU utilization"
       metrics = [
-        ["ExBroadcaster", "utilization_gpu", "AutoScalingGroupName", aws_autoscaling_group.ex_broadcaster.name, { stat = "Average" }]
+        ["ExBroadcaster", "nvidia_smi_utilization_gpu", "AutoScalingGroupName", aws_autoscaling_group.ex_broadcaster.name, { stat = "Average" }]
       ]
     },
     {
       title = "NVENC encoder sessions / fps"
       metrics = [
-        ["ExBroadcaster", "encoder_stats_session_count", "AutoScalingGroupName", aws_autoscaling_group.ex_broadcaster.name, { stat = "Average" }],
-        ["ExBroadcaster", "encoder_stats_average_fps", "AutoScalingGroupName", aws_autoscaling_group.ex_broadcaster.name, { stat = "Average", yAxis = "right" }]
+        ["ExBroadcaster", "nvidia_smi_encoder_stats_session_count", "AutoScalingGroupName", aws_autoscaling_group.ex_broadcaster.name, { stat = "Average" }],
+        ["ExBroadcaster", "nvidia_smi_encoder_stats_average_fps", "AutoScalingGroupName", aws_autoscaling_group.ex_broadcaster.name, { stat = "Average", yAxis = "right" }]
       ]
     }
   ] : []

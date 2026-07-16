@@ -13,6 +13,23 @@ resource "aws_s3_bucket_public_access_block" "hls" {
   restrict_public_buckets = false
 }
 
+resource "aws_s3_bucket_lifecycle_configuration" "hls" {
+  bucket = aws_s3_bucket.hls.id
+
+  rule {
+    id     = "expire-hls-objects"
+    status = "Enabled"
+
+    filter {
+      prefix = ""
+    }
+
+    expiration {
+      days = 7
+    }
+  }
+}
+
 resource "aws_s3_bucket_policy" "hls_public_read" {
   bucket = aws_s3_bucket.hls.id
 

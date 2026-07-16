@@ -36,9 +36,9 @@ In this chapter we cover the first three steps.
 ## Prerequisites
 
 In this chapter we will create an Elixir application and run it locally.
-The application can benefit from hardware-accelerated video transcoding via Vulkan Video native acceleration on Linux machines with a Vulkan-capable GPU (NVIDIA or AMD) with Mesa drivers and Vulkan Video extension support. It is not required though, `Membrane.Transcoder` will adapt to your environment.
+The application can benefit from hardware-accelerated video transcoding via Vulkan Video native acceleration on Linux machines with a Vulkan-capable GPU (NVIDIA or AMD) with Mesa drivers and Vulkan Video extension support. It is not required though — if `membrane_vk_video_plugin` isn't added to your dependencies (or Vulkan Video isn't available at runtime), `Membrane.Transcoder` falls back to software encoding.
 
-For more information, you can take a look at [membrane_transcoder_plugin](https://hexdocs.pm/membrane_transcoder_plugin) which provides hardware-accelerated transcoding capabilities via the `membrane_vk_video_plugin` dependency.
+For more information, you can take a look at [membrane_transcoder_plugin](https://hexdocs.pm/membrane_transcoder_plugin), which provides hardware-accelerated transcoding capabilities via the [`membrane_vk_video_plugin`](https://hexdocs.pm/membrane_vk_video_plugin) dependency, backed by the [`vk-video`](https://crates.io/crates/vk-video) Rust crate.
 
 If you are new to Membrane, please take a look at the [Getting Started with Membrane](https://hexdocs.pm/membrane_core/01_introduction-2.html) guide
 as it presents basic Membrane concepts and shows how to write your own simple pipelines —
@@ -108,7 +108,6 @@ defp deps do
  [
       {:membrane_core, "~> 1.2"},
       {:membrane_transcoder_plugin, "~> 0.4.0"},
-      {:membrane_vk_video_plugin, "> 0.0.0"},
       {:membrane_rtmp_plugin, "~> 0.29.3"},
       {:membrane_http_adaptive_stream_plugin, "~> 0.21.0"},
       {:membrane_mp4_plugin, "~> 0.36.0"},
@@ -122,13 +121,18 @@ We need the following packages:
 
 - [`membrane_core`](https://hexdocs.pm/membrane_core) — to specify the pipeline structure
 - [`membrane_transcoder_plugin`](https://hexdocs.pm/membrane_transcoder_plugin) — for transcoding capabilities with optional Vulkan Video native acceleration
-- [`membrane_vk_video_plugin`](https://hexdocs.pm/membrane_vk_video_plugin) — hardware-accelerated Vulkan Video encoding/decoding, used internally by `membrane_transcoder_plugin` when `native_acceleration: :if_available` is set. `membrane_transcoder_plugin` treats it as an *optional* dependency (so the transcoder falls back to software encoding if it's absent), but we depend on it directly here so Vulkan Video is actually available at runtime on GPU-capable hosts.
 - [`membrane_rtmp_plugin`](https://hexdocs.pm/membrane_rtmp_plugin) — for RTMP ingestion source
 - [`membrane_http_adaptive_stream_plugin`](https://hexdocs.pm/membrane_http_adaptive_stream_plugin) — for HLS playlist generation
 - [`membrane_mp4_plugin`](https://hexdocs.pm/membrane_mp4_plugin) — for wrapping stream in CMAF container
 - [`membrane_aac_plugin`](https://hexdocs.pm/membrane_aac_plugin) — to change the stream structure of audio streams (so that they "fit" in CMAF container)
 
-Vulkan Video itself is currently only available on Linux with a compatible GPU (NVIDIA or AMD with Mesa drivers) and the appropriate Vulkan extensions — on any other setup, `Membrane.Transcoder` just falls back to software encoding, so the dependency doesn't prevent the pipeline from running elsewhere.
+If you're on Linux with a Vulkan-capable GPU (NVIDIA or AMD with Mesa drivers) and want hardware-accelerated encoding/decoding, also add [`membrane_vk_video_plugin`](https://hexdocs.pm/membrane_vk_video_plugin):
+
+```elixir
+{:membrane_vk_video_plugin, "~> 0.2.0"}
+```
+
+`membrane_transcoder_plugin` treats it as an *optional* dependency — when `native_acceleration: :if_available` is set, it uses Vulkan Video if this dependency is present and the system supports it, and falls back to software encoding otherwise. If you're not on Linux/Vulkan, simply don't add it; the pipeline still runs, just without hardware acceleration.
 
 Download the dependencies with:
 
@@ -303,31 +307,12 @@ defmodule ExBroadcaster.Pipeline do
   alias Membrane.Pad
   alias Membrane.Transcoder.Video.VariableBitrate
 
+  @max_bitrate_factor 1.1
+
   @variants [
-    %{
-      id: :p1080,
-      track_name: "1080p",
-      width: 1920,
-      height: 1080,
-      framerate: {30, 1},
-      bitrate: %VariableBitrate{average_bitrate: 5_000_000, max_bitrate: 6_000_000}
-    },
-    %{
-      id: :p720,
-      track_name: "720p",
-      width: 1280,
-      height: 720,
-      framerate: {30, 1},
-      bitrate: %VariableBitrate{average_bitrate: 2_800_000, max_bitrate: 3_500_000}
-    },
-    %{
-      id: :p480,
-      track_name: "480p",
-      width: 854,
-      height: 480,
-      framerate: {30, 1},
-      bitrate: %VariableBitrate{average_bitrate: 1_400_000, max_bitrate: 1_750_000}
-    }
+    %{id: :p1080, track_name: "1080p", width: 1920, height: 1080, framerate: {30, 1}, average_bitrate: 5_000_000},
+    %{id: :p720, track_name: "720p", width: 1280, height: 720, framerate: {30, 1}, average_bitrate: 2_800_000},
+    %{id: :p480, track_name: "480p", width: 854, height: 480, framerate: {30, 1}, average_bitrate: 1_400_000}
   ]
 
   def start_link(opts) do
@@ -384,7 +369,6 @@ graph LR
     end
 
     subgraph "Video branch"
-        H264in["Membrane.H264.Parser\n(annexb · au-aligned)"]
         Transcoder["Membrane.Transcoder\n(multi-output)"]
     end
 
@@ -409,10 +393,9 @@ graph LR
         HLS["HTTPAdaptiveStream.Sink\n(index.m3u8 + fMP4 segments)"]
     end
 
-    RTMP -- ":video" --> H264in
+    RTMP -- ":video" --> Transcoder
     RTMP -- ":audio" --> AACParser
 
-    H264in --> Transcoder
     AACParser --> AudioTee
 
     Transcoder -- "output(:p1080)" --> CMAF1080
@@ -432,12 +415,8 @@ A few things worth noting:
 
 - **Single `Membrane.Transcoder` with multiple outputs** — Starting from v0.4.0, `Membrane.Transcoder` supports multiple output pads.
   We configure a single transcoder instance with three output pads, each producing a different resolution variant (1080p, 720p, 480p).
-  Each output pad has its own `output_stream_format` (target resolution) and `bitrate` (target bitrate ladder).
-  `transcoding_policy: :always` and `native_acceleration: :if_available` are set once, on the transcoder child itself; every
-  output pad also accepts its own `transcoding_policy`/`native_acceleration`/`bitrate` that, when left unset (`nil`, the
-  default), simply inherits the child-level value — we only need to override `bitrate` per pad here, since that's the one
-  setting that has to differ between variants. `native_acceleration: :if_available` enables Vulkan Video hardware
-  acceleration when the `membrane_vk_video_plugin` dependency is present and the system supports it.
+  Each output pad sets its own desired bitrate; the transcoding policy (`:always`) and native acceleration
+  (`:if_available`) are set once on the transcoder child and inherited by every output pad.
 - **`Membrane.Tee` for audio fan-out** — audio is parsed once and replicated to each CMAF muxer
   via dynamic output pads. There is no audio re-encoding.
 - **One `CMAF.Muxer` per variant** — each muxer receives exactly one video pad (from transcoder) and one audio pad (from tee),
@@ -454,10 +433,6 @@ A few things worth noting:
     video_branch =
       get_child(:rtmp_source)
       |> via_out(:video)
-      |> child(:h264_parser, %Membrane.H264.Parser{
-        output_alignment: :au,
-        output_stream_structure: :annexb
-      })
       |> child(:transcoder, %Membrane.Transcoder{
         transcoding_policy: :always,
         native_acceleration: :if_available
@@ -489,15 +464,15 @@ A few things worth noting:
 
 - **`rtmp_source`** — `Membrane.RTMP.SourceBin` receives the incoming RTMP connection identified by `client_ref`
   and demuxes it, exposing separate `:video` and `:audio` output pads.
-- **`video_branch`** — takes the raw H.264 video, runs it through `Membrane.H264.Parser` (reformatting to Annex B, AU-aligned),
-  then feeds it into a single `Membrane.Transcoder` with multiple output pads (one per variant).
+- **`video_branch`** — feeds the raw H.264 video straight into a single `Membrane.Transcoder` with multiple output pads
+  (one per variant); the transcoder parses the input itself, so we don't need a standalone `Membrane.H264.Parser` here.
 - **`audio_branch`** — takes the AAC audio stream, parses it into raw ADTS-stripped frames with ESDS config,
   then feeds it into a `Membrane.Tee` so the single audio stream can be fanned out
   to all resolution variants without re-encoding.
 - **`hls_sink`** — `HTTPAdaptiveStream.Sink` collects CMAF tracks from all variants and writes fMP4 segments
   plus a multi-variant `index.m3u8` playlist via the provided `storage` backend.
 
-Apart from there we define `variant_specs` — one spec per entry in `@variants`,
+Apart from that we define `variant_specs` — one spec per entry in `@variants`,
 built by `build_variant_spec/2` (covered in the next section).
 Each variant connects a transcoder output pad and an audio tee output pad into a shared CMAF muxer,
 which feeds its track into the HLS sink.
@@ -510,7 +485,12 @@ one for video, one for audio — that together form a single resolution variant:
 ```elixir
 # lib/ex_broadcaster/pipeline.ex
   defp build_variant_spec(variant, segment_duration) do
-    %{id: id, track_name: name, width: w, height: h, framerate: fps, bitrate: bitrate} = variant
+    %{id: id, track_name: name, width: w, height: h, framerate: fps, average_bitrate: average_bitrate} = variant
+
+    bitrate = %VariableBitrate{
+      average_bitrate: average_bitrate,
+      max_bitrate: round(average_bitrate * @max_bitrate_factor)
+    }
 
     # Video path: from transcoder output pad to CMAF muxer
     video_to_muxer =
@@ -550,30 +530,18 @@ one for video, one for audio — that together form a single resolution variant:
 ```
 
 The **video chain** (`video_to_muxer`) starts from the single transcoder's output pad (referenced by variant `id`).
-Each output pad is opened with `via_out(Pad.ref(:output, id), options: [...])`,
-passing the encoding parameters for this variant via `output_stream_format`
-(target resolution, framerate, alignment, and stream structure — set to `avc1` for CMAF compatibility) and `bitrate`
-(a `Membrane.Transcoder.Video.VariableBitrate` struct with an `average_bitrate` the encoder targets over the whole
-stream and a `max_bitrate` cap on momentary spikes, both in bits per second — `Membrane.Transcoder.Video.ConstantBitrate`
-is also available if you'd rather hold a fixed rate instead). We don't repeat `transcoding_policy` or
-`native_acceleration` here since both default to `nil` on the `:output` pad, which means "inherit from the transcoder
-child's own setting" — passing a value here would only be needed to *override* the child-level default for one
-specific variant. The transcoder automatically handles the stream format and bitrate conversion for each variant.
-The muxer output is then linked into the shared `:hls_sink`, with per-track metadata such as `track_name` and
-`max_framerate` passed via `via_in` options.
-
-A per-resolution bitrate is what actually makes the HLS ladder useful: without it, all three variants would be encoded
-at whatever default rate control the underlying encoder falls back to (e.g. CRF-based for H.264/H.265), which doesn't
-reliably produce three *meaningfully different* bitrates for a player to switch between based on network conditions.
+Each output pad is opened with `via_out(Pad.ref(:output, id), options: [...])`, passing the encoding parameters for
+this variant via `output_stream_format` (target resolution, framerate, alignment, and stream structure — set to
+`avc1` for CMAF compatibility) and `bitrate`. We build `bitrate` as a `Membrane.Transcoder.Video.VariableBitrate`
+struct, keeping `max_bitrate` close to `average_bitrate` (a factor of `@max_bitrate_factor`) since a livestream
+should stay close to constant bitrate — `Membrane.Transcoder.Video.ConstantBitrate` is also available if you'd
+rather hold a fixed rate instead. The muxer output is then linked into the shared `:hls_sink`, with per-track
+metadata such as `track_name` and `max_framerate` passed via `via_in` options.
 
 The **audio chain** (`audio_to_muxer`) taps the `:audio_tee` at a dynamic output pad keyed by `id`
 and feeds directly into the same `{:cmaf_muxer, id}` that the video chain already created.
 This means a single CMAF muxer produces one interleaved audio+video track per variant,
 which is exactly what HLS adaptive streaming expects.
-
-**Key improvement in v0.4.0**: Instead of creating three separate `Membrane.Transcoder` instances (one per resolution),
-we now use a single transcoder with three output pads, each configured with different output stream formats.
-This is more efficient as it allows the transcoder to share resources between the different output variants.
 
 ### Self-termination of the pipeline
 
@@ -594,80 +562,6 @@ when the stream ends:
 ```
 
 We only need to `terminate: normal` when the end-of-stream signal arrives at `:hls_sink` sink element.
-
-### Using membrane_vk_video_plugin directly
-
-The pipeline above uses `Membrane.Transcoder` with `native_acceleration: :if_available`, which automatically uses
-`membrane_vk_video_plugin` for hardware-accelerated H.264/H.265 encoding and decoding when available.
-However, you can also build a pipeline using `membrane_vk_video_plugin` directly, giving you more control
-over the Vulkan Video components.
-
-`membrane_vk_video_plugin` provides the following key elements:
-
-- `Membrane.VulkanVideo.Decoder` — hardware-accelerated video decoder for H.264 and H.265
-- `Membrane.VulkanVideo.Encoder` — hardware-accelerated video encoder for H.264 and H.265
-- `Membrane.VulkanVideo.Scaler` — hardware-accelerated scaling/conversion between raw video formats
-
-Here is an example of a transcoding chain using these elements directly:
-
-```elixir
-# Alternative transcoding chain using membrane_vk_video_plugin directly
-video_chain =
-  get_child(:h264_parser)
-  |> via_out()
-  |> child(:vk_decoder, %Membrane.VulkanVideo.Decoder{
-      input_stream_structure: :annexb,
-      output_format: %Membrane.RawVideo{pixel_format: :nv12}
-    })
-  |> child(:vk_scaler, %Membrane.VulkanVideo.Scaler{
-      output_format: %Membrane.RawVideo{
-        width: 1280,
-        height: 720,
-        pixel_format: :nv12
-      }
-    })
-  |> child(:vk_encoder, %Membrane.VulkanVideo.Encoder{
-      output_format: %Membrane.H264{
-        alignment: :au,
-        stream_structure: :annexb
-      }
-    })
-```
-
-#### When to use membrane_vk_video_plugin directly
-
-You should reach for `membrane_vk_video_plugin` directly when you need fine-grained control over the Vulkan Video components.
-With direct access to the decoder, scaler, and encoder, you can customize each step of the transcoding process
-and use plugin-specific options that aren't exposed through `Membrane.Transcoder`.
-This approach is also useful when you want to insert custom processing elements between decoding and encoding,
-such as raw video filters or analytics. If your pipeline only needs Vulkan Video capabilities
-and you want to avoid the `membrane_transcoder_plugin` dependency, using the plugin directly is a good fit.
-
-On the other hand, `membrane_transcoder_plugin` is the better choice for most use cases.
-It provides a simple, unified interface where a single element handles decoding, scaling, and encoding.
-Crucially, it automatically falls back to software transcoding via FFmpeg when Vulkan Video is unavailable,
-so your pipeline continues to work even on systems without GPU acceleration.
-The transcoder also supports a wider range of codecs beyond H.264 and H.265 (like VP8, VP9, and various audio formats),
-handles stream format negotiation automatically, and can transcode both audio and video in one element.
-
-> **Note**: When using `membrane_transcoder_plugin` with `native_acceleration: :if_available`, you get the benefits
-> of Vulkan Video acceleration automatically when available, with software fallback when not.
-> The direct `membrane_vk_video_plugin` approach gives you more control but requires Vulkan Video support
-> and does not provide software fallback.
-
-To use `membrane_vk_video_plugin` directly, add it to your dependencies:
-
-```elixir
-# mix.exs
-{:membrane_vk_video_plugin, "~> 0.2.0"}
-```
-
-Remember that `membrane_vk_video_plugin` requires:
-
-- Linux operating system
-- Vulkan-capable GPU (NVIDIA or AMD)
-- Mesa drivers with Vulkan Video extension support
-- Appropriate Vulkan extensions for video decode/encode
 
 ## Running the application
 
@@ -693,48 +587,6 @@ http://localhost:8080/key/index.m3u8
 You can open this URL directly in a browser with native HLS support (e.g. Safari or Chrome).
 Alternatively, paste it into the [hls.js demo player](https://hlsjs.video-dev.org/demo/) (local HTTP server is configure to allow all CORS origins).
 You should be able to see that the resolution changes throughout based on your network condition or even manually change it.
-
-### Streaming from OBS Studio instead of FFmpeg
-
-The FFmpeg command above is convenient for a quick smoke test, but a real streamer will be pushing video from
-[OBS Studio](https://obsproject.com/). Pointing it at your local server takes two fields:
-
-1. Open **Settings → Stream**.
-2. Set **Service** to `Custom...`.
-3. Set **Server** to `rtmp://localhost:1935/ex_broadcaster` — everything up to the stream key is the RTMP `app` name
-   (`ex_broadcaster` here, matching what `handle_new_client/3` receives as `app`; it isn't checked against anything,
-   so any value works as long as it's consistent).
-4. Set **Stream Key** to any value you like, e.g. `key` — this becomes the `stream_key` your pipeline uses to name
-   its output directory (`output/hls/<stream_key>/`) or S3 prefix.
-5. Click **Apply**, close Settings, then click **Start Streaming** in the main OBS window.
-
-You should see `[App] New RTMP client: app=ex_broadcaster, stream_key=key` in your `mix run --no-halt` logs the
-moment OBS connects. From here, playback works exactly as described above:
-`http://localhost:8080/key/index.m3u8`.
-
-A couple of things worth checking if the stream doesn't show up:
-
-- OBS's **Output** settings must be set to encode H.264 video and AAC audio (the default `x264`/simple output mode
-  already does this) — the pipeline's `H264.Parser` and `AAC.Parser` expect exactly those codecs coming out of the
-  RTMP source.
-- The bottom-right status bar in OBS shows the live connection state; "Reconnecting..." there usually means the
-  server isn't reachable at the address/port you configured, not a codec problem.
-
-### Watching the stream in VLC
-
-Any HLS-capable player works against the `index.m3u8` URL, including [VLC](https://www.videolan.org/vlc/):
-
-1. Open VLC and go to **Media → Open Network Stream** (macOS: **File → Open Network...**).
-2. Paste `http://localhost:8080/key/index.m3u8` into the URL field (swap `key` for whatever stream key you used).
-3. Click **Play**.
-
-VLC will start playback once the pipeline has written the first few segments — expect a few seconds of delay after
-you start streaming from OBS before anything appears, roughly equal to `segment_duration_sec` times the HLS
-player's default startup buffering (a few segments). To confirm adaptive switching is actually working, open
-**Tools → Media Information → Statistics** while playing — the reported video resolution/bitrate should match
-whichever variant VLC is currently pulling, and you can force a specific one from **Video → Video Track**... though
-which variants a player exposes there depends on its own ABR implementation, so this menu may just show one entry
-for "HTTP Live Streaming" rather than per-resolution tracks.
 
 ## Adding S3 storage
 

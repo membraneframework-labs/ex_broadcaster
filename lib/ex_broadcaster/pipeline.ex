@@ -10,9 +10,9 @@ defmodule ExBroadcaster.Pipeline do
 
     RTMP.SourceBin
       │
-      ├─ :video ──► H264.Parser ──► Transcoder ──┬─ :output(:p1080) ──► CMAF.Muxer(1080p) ─►
-      │                                     ├─ :output(:p720)  ──► CMAF.Muxer(720p)  ─► HLS.Sink
-      │                                     └─ :output(:p480)  ──► CMAF.Muxer(480p)  ─►
+      ├─ :video ──► Transcoder ──┬─ :output(:p1080) ──► CMAF.Muxer(1080p) ─►
+      │                          ├─ :output(:p720)  ──► CMAF.Muxer(720p)  ─► HLS.Sink
+      │                          └─ :output(:p480)  ──► CMAF.Muxer(480p)  ─►
       │
       └─ :audio ──► AAC.Parser ──► Tee ──────────┬─ :output(:p1080) ─► CMAF.Muxer(1080p) ─►
                                                   ├─ :output(:p720)  ─► CMAF.Muxer(720p)  ─►
@@ -42,6 +42,8 @@ defmodule ExBroadcaster.Pipeline do
   alias Membrane.Pad
   alias Membrane.Transcoder.Video.VariableBitrate
 
+  @max_bitrate_factor 1.1
+
   @variants [
     %{
       id: :p1080,
@@ -49,7 +51,7 @@ defmodule ExBroadcaster.Pipeline do
       width: 1920,
       height: 1080,
       framerate: {30, 1},
-      bitrate: %VariableBitrate{average_bitrate: 5_000_000, max_bitrate: 6_000_000}
+      average_bitrate: 5_000_000
     },
     %{
       id: :p720,
@@ -57,7 +59,7 @@ defmodule ExBroadcaster.Pipeline do
       width: 1280,
       height: 720,
       framerate: {30, 1},
-      bitrate: %VariableBitrate{average_bitrate: 2_800_000, max_bitrate: 3_500_000}
+      average_bitrate: 2_800_000
     },
     %{
       id: :p480,
@@ -65,7 +67,7 @@ defmodule ExBroadcaster.Pipeline do
       width: 854,
       height: 480,
       framerate: {30, 1},
-      bitrate: %VariableBitrate{average_bitrate: 1_400_000, max_bitrate: 1_750_000}
+      average_bitrate: 1_400_000
     }
   ]
 
@@ -106,10 +108,6 @@ defmodule ExBroadcaster.Pipeline do
     video_branch =
       get_child(:rtmp_source)
       |> via_out(:video)
-      |> child(:h264_parser, %Membrane.H264.Parser{
-        output_alignment: :au,
-        output_stream_structure: :annexb
-      })
       |> child(:transcoder, %Membrane.Transcoder{
         transcoding_policy: :always,
         native_acceleration: :if_available
@@ -137,7 +135,19 @@ defmodule ExBroadcaster.Pipeline do
   end
 
   defp build_variant_spec(variant, segment_duration) do
-    %{id: id, track_name: name, width: w, height: h, framerate: fps, bitrate: bitrate} = variant
+    %{
+      id: id,
+      track_name: name,
+      width: w,
+      height: h,
+      framerate: fps,
+      average_bitrate: average_bitrate
+    } = variant
+
+    bitrate = %VariableBitrate{
+      average_bitrate: average_bitrate,
+      max_bitrate: round(average_bitrate * @max_bitrate_factor)
+    }
 
     video_to_muxer =
       get_child(:transcoder)

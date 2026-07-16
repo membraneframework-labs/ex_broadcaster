@@ -1,5 +1,5 @@
 variable "aws_region" {
-  description = "AWS region (must match the ambient provider config)"
+  description = "AWS region"
   type        = string
   default     = "eu-north-1"
 }
@@ -69,7 +69,7 @@ variable "alarm_email" {
 variable "enable_cdn" {
   description = "Whether to provision a CloudFront distribution in front of the HLS bucket"
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "cloudfront_price_class" {

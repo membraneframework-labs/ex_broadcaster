@@ -108,12 +108,11 @@ aws service-quotas get-requested-service-quota-change \
 Approval is often instant but can take up to a day or two for larger increases — request it first, then move on to
 the rest of the setup while you wait.
 
-You don't have to sit around waiting for it, though: set `gpu_enabled = false` (in `terraform.tfvars` or via
+You don't have to sit around waiting for it, though: set `gpu_enabled = false` (in `variables.tf` or via
 `terraform apply -var="gpu_enabled=false"`) and the ASG falls back to a `c6i.large` (no GPU, no Vulkan Video quota needed) instead
-of `g6.xlarge`, so you can bring up the rest of the stack and exercise it end-to-end immediately. Vulkan Video
-hardware acceleration just won't be available on that fleet, so `Membrane.Transcoder` falls back to software
-encoding — fine for getting everything wired up, but switch back to `gpu_enabled = true` (the default) once your
-quota is approved if you want hardware-accelerated transcoding in production.
+of `g6.xlarge`, so you can bring up the rest of the stack and exercise it end-to-end immediately. `Membrane.Transcoder`
+falls back to software encoding on that fleet, since Vulkan Video hardware acceleration isn't available there — switch
+back to `gpu_enabled = true` (the default) once your quota is approved to get hardware-accelerated transcoding in production.
 
 ## Initializing Terraform
 
@@ -144,7 +143,7 @@ variable "alarm_email"          { default = "" }            # set to get alarm e
 into the `aws` provider block (`provider "aws" { region = var.aws_region }`), and `vpc.tf` picks its two
 availability zones dynamically via the `aws_availability_zones` data source rather than hardcoding AZ names tied
 to one region. To deploy elsewhere, override it (e.g. `terraform apply -var="aws_region=us-east-1"`, or set it in
-a `terraform.tfvars` file) — just make sure `g6.xlarge` (or whichever `instance_type` you choose) is actually
+a `variables.tf` file) — just make sure `g6.xlarge` (or whichever `instance_type` you choose) is actually
 offered there, and that you request the GPU quota increase above in that same region.
 
 ## Building and pushing the image
@@ -193,7 +192,7 @@ A few of these resources are worth understanding before you run it.
 ### The S3 bucket
 
 `s3.tf` provisions the same bucket chapter 1's `S3Storage` writes to, now as part of the infrastructure instead of
-something you created by hand:
+something you created by hand.
 
 ```hcl
 # terraform/s3.tf
@@ -205,6 +204,9 @@ resource "aws_s3_bucket" "hls" {
 It's configured with a public-read bucket policy (scoped to `s3:GetObject` only — nobody can list or write
 without the instance role's credentials) and a permissive CORS rule for `GET`/`HEAD`, mirroring the CORS behavior
 of the development HTTP server from chapter 1 so `hls.js`-based players work against the bucket directly.
+The public-read policy is convenient for this tutorial, but isn't how you'd want to expose storage
+in production — there, scope access to CloudFront only (e.g. via Origin Access Control) instead of making the
+bucket world-readable.
 
 ### The GPU launch template and Auto Scaling Group
 
@@ -288,10 +290,12 @@ docker run -d \
   "$IMAGE"
 ```
 
-A couple of details worth calling out: the container's stdout/stderr go straight to CloudWatch Logs via Docker's
-own `awslogs` log driver, no sidecar needed. And port 8080 — the development HTTP server from chapter 1 — is only
-bound to `127.0.0.1`, not exposed to the NLB or the internet; in production, HLS is served from S3 (directly, or
-through a CDN in front of it), so the in-process HTTP server has no reason to be reachable from outside the instance.
+A couple of details worth calling out:
+
+- The container's stdout/stderr go straight to CloudWatch Logs via Docker's own `awslogs` log driver — no sidecar needed.
+- Port 8080, the development HTTP server from chapter 1, is only bound to `127.0.0.1`, not exposed to the NLB or the
+  internet. In production, HLS is served from S3 (directly, or through a CDN in front of it), so the in-process
+  HTTP server has no reason to be reachable from outside the instance.
 
 ## Verifying the deployment
 
@@ -320,7 +324,7 @@ The stream should show up shortly after in the bucket, under the date-partitione
 
 If nothing shows up, the CloudWatch log groups set up next are the fastest way to find out why.
 
-## Streaming with OBS and watching with VLC
+## Streaming with OBS and watching the output
 
 `ffmpeg` is fine for a synthetic smoke test, but a real check of the end-to-end path means pushing a stream from an
 actual encoder and watching it back the way a viewer would.
@@ -341,12 +345,10 @@ actual encoder and watching it back the way a viewer would.
 OBS's connection indicator (bottom-right) turning green, with a steady bitrate and no dropped-frames warning,
 means the NLB accepted the connection and RTMP ingest is flowing into the ASG.
 
-### Watching the stream with VLC
+### Watching the stream
 
-Once OBS is live, give the pipeline a few seconds to produce the first HLS segments, then open the playlist in
-[VLC](https://www.videolan.org/vlc/):
-
-- **Media → Open Network Stream**, and paste the playlist URL:
+Once OBS is live, give the pipeline a few seconds to produce the first HLS segments, then grab the playlist URL —
+the [hls.js demo player](https://hlsjs.video-dev.org/demo/) is the simplest way to check playback end to end:
 
 ```
 <hls_bucket_url>/hls/<year>/<month>/<day>/<hour>/obs-test/index.m3u8
@@ -361,11 +363,12 @@ https://<cdn_domain_name>/<s3_prefix>/<year>/<month>/<day>/<hour>/obs-test/index
 (`<year>/<month>/<day>/<hour>` are UTC and match when you started streaming — the same date-partitioned prefix
 from chapter 1's `build_storage/1`; `obs-test` is whatever stream key you set above.)
 
-- Click **Play**. VLC should start playback within a few seconds, matching what's live in OBS with the usual HLS
-  latency (typically several seconds, from segment duration plus playlist propagation).
+Paste the URL into the demo player's "stream URL" field and hit **Load**. Playback should start within a few
+seconds, matching what's live in OBS with the usual HLS latency (typically several seconds, from segment duration
+plus playlist propagation).
 
-If VLC can't fetch the playlist, double-check the prefix/date first — it's the most common mismatch — then fall
-back to the CloudWatch log groups below to see whether the container is actually receiving and writing segments.
+If it doesn't load, double-check the prefix/date first — it's the most common mismatch — then fall back to the
+CloudWatch log groups below to see whether the container is actually receiving and writing segments.
 
 ## Monitoring
 
