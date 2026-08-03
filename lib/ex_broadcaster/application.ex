@@ -24,6 +24,7 @@ defmodule ExBroadcaster.Application do
 
   alias ExBroadcaster.Storages.S3Storage
   alias Membrane.HTTPAdaptiveStream.Storages.FileStorage
+  alias Membrane.RTMPServer, as: RTMPServer
 
   @max_concurrent_pipelines Application.compile_env(
                               :ex_broadcaster,
@@ -55,7 +56,7 @@ defmodule ExBroadcaster.Application do
   Each pipeline uploads HLS output to its own S3 prefix named after
   the stream key, allowing multiple simultaneous streams.
   """
-  @spec handle_new_client(pid(), String.t(), String.t()) :: client_behaviour_spec()
+  @spec handle_new_client(pid(), String.t(), String.t()) :: RTMPServer.client_behaviour_spec()
   def handle_new_client(client_ref, app, stream_key) do
     Logger.info("[App] New RTMP client: app=#{app}, stream_key=#{stream_key}")
 

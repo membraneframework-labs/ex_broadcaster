@@ -3,15 +3,15 @@ defmodule ExBroadcaster do
   RTMP-to-HLS adaptive transcoding application built on the Membrane Framework.
 
   Receives an RTMP stream (H.264/AAC) and produces multi-variant HLS output
-  using GPU-accelerated transcoding via `membrane_vk_video_plugin`.
+  using `Membrane.Transcoder` with Vulkan Video native acceleration via `membrane_vk_video_plugin`.
 
   ## Variants
 
-  | Name  | Resolution  | Bitrate    |
-  |-------|-------------|------------|
-  | 1080p | 1920 × 1080 | 4 000 kbps |
-  | 720p  | 1280 × 720  | 2 500 kbps |
-  | 480p  | 854 × 480   | 1 000 kbps |
+  | Name  | Resolution  | Bitrate (avg / max) |
+  |-------|-------------|----------------------|
+  | 1080p | 1920 × 1080 | 5.0 Mbps / 6.0 Mbps  |
+  | 720p  | 1280 × 720  | 2.8 Mbps / 3.5 Mbps  |
+  | 480p  | 854 × 480   | 1.4 Mbps / 1.75 Mbps |
 
   ## Usage
 
